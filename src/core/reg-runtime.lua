@@ -31,7 +31,6 @@ function Runtime.run(mainproto, options)
     options = options or {}
     local globals = options.environment or _G
     local step_limit = options.steps or Runtime.LIMITS.steps
-    local depth_limit = options.depth or Runtime.LIMITS.depth
     local steps = 0
 
     -- Cooperative auto-yield: on Roblox a heavy synchronous loop would hit
@@ -85,7 +84,7 @@ function Runtime.run(mainproto, options)
         local top = 0
         while true do
             steps = steps + 1
-            if steps > step_limit then kk_error("reg-vm: step limit exceeded", 0) end
+            if steps > step_limit then kk_error("script exhausted allowed execution time", 0) end
             if yield_fn and steps >= next_yield then
                 next_yield = steps + yield_interval
                 if isyieldable and isyieldable() then yield_fn() end
@@ -192,7 +191,7 @@ function Runtime.run(mainproto, options)
                 local a = inst[2]
                 if R[a + 3] ~= nil then R[a + 2] = R[a + 3]; pc = pc + inst[3] end
             else
-                kk_error("reg-vm: bad opcode " .. tostring(op) .. " at pc " .. (pc - 1), 0)
+                kk_error("invalid instruction", 0)
             end
         end
     end
