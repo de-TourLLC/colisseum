@@ -5,6 +5,7 @@
 -- No loadstring.
 
 local Parser = require("src.core.parser")
+local LuauTypes = require("src.core.luau-type-erase")
 local RB = require("src.core.reg-bytecode")
 local OP = RB.OP
 
@@ -763,7 +764,7 @@ local function compile_function(params, body, is_vararg, parent)
 end
 
 function RegCompiler.compile(source)
-    local ast = Parser.parse(source)
+    local ast = Parser.parse(LuauTypes.erase(source))
     -- main chunk is a vararg function with no params
     return compile_function({}, ast.body, true, nil)
 end

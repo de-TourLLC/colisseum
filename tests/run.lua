@@ -15,6 +15,7 @@ local References = require("src.core.references")
 local Bytecode = require("src.core.bytecode")
 local Runtime = require("src.core.runtime")
 local Obfuscator = require("src.obfuscator")
+local LuauTypes = require("src.core.luau-type-erase")
 
 local passed, failed = 0, 0
 
@@ -125,6 +126,27 @@ return add(2)]]
     local table_values = Obfuscator.execute("local item = {name = 9}\nreturn item.name")
     equal(table_values[1], 9, "member access result")
     fails(function() Obfuscator.execute("while true do end", { steps = 20 }) end, "step limit exceeded")
+end)
+
+test("native VMs erase Luau type metadata before compiling", function()
+    local source = [[
+export type Counter = { value: number }
+local function add(left: number, right: number): number
+    return (left :: number) + right
+end
+local item: Counter = { value = add(19, 23) }
+return item.value
+]]
+    local erased = LuauTypes.erase(source)
+    check(not erased:find("export type", 1, true), "type alias survived erasure")
+    check(not erased:find("::", 1, true), "type assertion survived erasure")
+    local chunk, load_error = loadstring(erased)
+    check(chunk ~= nil, "erased Luau did not load as Lua: " .. tostring(load_error))
+    local values = Obfuscator.execute(source)
+    equal(values[1], 42, "native compiler changed typed Luau semantics")
+    local fortress = Obfuscator.obfuscate(source, { preset = "fortress", target = "luau", seed = 42 })
+    check(type(fortress) == "string" and #fortress > 0, "Fortress produced no native VM output")
+    check(not fortress:find("export type", 1, true), "Fortress retained a type alias")
 end)
 
 test("text presets produce valid executable LuaJIT output", function()

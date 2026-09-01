@@ -25,6 +25,11 @@ local cases = {
  {"semicolon statements","local a=1; local b=2; return a+b",3},
  {"table semicolon sep","local t={1;2;3} return t[1]+t[2]+t[3]",6},
  {"table trailing comma","local t={4,5,6,} return #t",3},
+ {"compound assign","local x=5 x+=3 x*=2 x-=1 return x",15},
+ {"compound member","local t={n=10} t.n+=5 t.n*=2 return t.n",30},
+ {"compound concat","local s='a' s..='b' s..='c' return s","abc"},
+ {"generic function","local function id<T>(x) return x*2 end return id(21)",42},
+ {"generic dotted def","local M={} function M.map<T>(x) return x+1 end return M.map(41)",42},
 }
 local ok = 0
 for i, c in ipairs(cases) do

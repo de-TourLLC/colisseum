@@ -1,0 +1,14 @@
+    ::::::::   ::::::::  :::        ::::::::::: ::::::::   ::::::::  :::::::::: :::    ::: ::::    ::::  
+    :+:    :+: :+:    :+: :+:            :+:    :+:    :+: :+:    :+: :+:        :+:    :+: +:+:+: :+:+:+ 
+    +:+        +:+    +:+ +:+            +:+    +:+        +:+        +:+        +:+    +:+ +:+ +:+:+ +:+ 
+    +#+        +#+    +:+ +#+            +#+    +#++:++#++ +#++:++#++ +#++:++#   +#+    +:+ +#+  +:+  +#+ 
+    +#+        +#+    +#+ +#+            +#+           +#+        +#+ +#+        +#+    +#+ +#+       +#+ 
+    #+#    #+# #+#    #+# #+#            #+#    #+#    #+# #+#    #+# #+#        #+#    #+# #+#       #+# 
+    ########   ########  ########## ########### ########   ########  ##########  ########  ###       ### 
+
+colisseum: usage:
+  lua cli.lua --preset Easy|Medium|Hard|Full|Total|Fortress [--LuaU|--Roblox --secure --backend native|register|fiu --compiler path] --out output.lua input.lua
+  Fortress = maximum client hardening on the fast register VM (Lua + Luau/Roblox); every static layer + encrypted, permuted, name-mangled bytecode.
+  lua cli.lua --preset <name> --batch --out <output-dir> file1.lua file2.lua ...
+  backends: native (default) = tree-walking VM; register = faster register VM (2-6x); both run on
+            Lua and Luau/Roblox with no compiler. fiu = real Luau bytecode VM for full Luau syntax (needs --LuaU + compiler).

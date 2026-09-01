@@ -10,6 +10,7 @@ local catalog = require("src.steps.catalog")
 local Errors = require("src.core.errors")
 local StepPaths = require("src.core.step-paths")
 local Entropy = require("src.core.entropy")
+local LuauTypes = require("src.core.luau-type-erase")
 
 local Obfuscator = {}
 Obfuscator.version = "0.1.0"
@@ -172,6 +173,16 @@ function Obfuscator.obfuscate(source, options)
     local target = tostring(options.target or (options.luau and "luau" or "lua")):lower()
     if not targets[target] then error("obfuscator: target must be 'lua' or 'luau'") end
     local pipeline = options.steps or Obfuscator.preset(options.preset or "easy")
+    -- Native VM bytecode has Lua runtime semantics. Erase Luau-only type metadata
+    -- before any transforms whenever the pipeline will finish in that VM.
+    if target == "luau" then
+        for _, item in ipairs(pipeline) do
+            if (type(item) == "string" and item or item[1]) == "vm" then
+                source = LuauTypes.erase(source)
+                break
+            end
+        end
+    end
     local valid, message, position = Validate.syntax(source)
     if not valid then error("obfuscator: syntax structure error at " .. position .. ": " .. message) end
     -- Per-run seed. Explicit options.seed makes a build reproducible; otherwise a
@@ -211,7 +222,7 @@ function Obfuscator.obfuscate(source, options)
 end
 
 function Obfuscator.parse(source)
-    local ast = Parser.parse(source)
+    local ast = Parser.parse(LuauTypes.erase(source))
     local valid, message = Ast.validate(ast)
     if not valid then error("obfuscator: invalid AST: " .. message) end
     References.analyze(ast)
@@ -245,6 +256,7 @@ function Obfuscator.package_luau(source, options)
     for _, item in ipairs(Obfuscator.preset(options.preset or "secure")) do
         if item[1] ~= "vm" then steps[#steps + 1] = item end
     end
+    if target == "luau" and backend ~= "fiu" then source = LuauTypes.erase(source) end
     local transformed = Obfuscator.obfuscate(source, {
         steps = steps,
         target = target,

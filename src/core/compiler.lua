@@ -2,6 +2,7 @@
 -- data; it never evaluates source text.
 local Lexer = require("src.core.lexer")
 local Parser = require("src.core.parser")
+local LuauTypes = require("src.core.luau-type-erase")
 local Ast = require("src.core.ast")
 local References = require("src.core.references")
 local Bytecode = require("src.core.bytecode")
@@ -87,6 +88,7 @@ end
 
 local function parse(source)
     if type(source) ~= "string" then error("compiler: source must be a string", 2) end
+    source = LuauTypes.erase(source)
     preflight(source)
     local ok, ast_or_error = pcall(Parser.parse, source)
     if not ok then

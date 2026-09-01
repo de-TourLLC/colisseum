@@ -94,9 +94,11 @@ function Step.apply(source, options)
         "local " .. V .. "=" .. R .. ".run(" .. P .. ",{environment=" .. E .. ",yield_interval=1000000})",
         "return " .. V .. "[1]," .. V .. "[2]," .. V .. "[3]," .. V .. "[4]",
     }, "\n")
-    -- Collapse the whole bundle (including the multi-line ChaCha loader) to a
-    -- single line so nothing readable survives as structure.
-    return Minify.apply(bundle)
+    -- Collapse to a single line. The only newlines are statement separators (the
+    -- ChaCha loader template); the minified VM sources and the encrypted payload
+    -- carry no literal newlines, so replacing newlines with spaces is safe and
+    -- avoids re-lexing the whole (large) bundle.
+    return (bundle:gsub("[\r\n]+", " "))
 end
 
 setmetatable(Step, { __call = function(self, source, options) return self.apply(source, options) end })

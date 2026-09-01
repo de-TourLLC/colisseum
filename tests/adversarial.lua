@@ -114,6 +114,12 @@ local function shell_quote(path)
     return '"' .. path:gsub('"', '""') .. '"'
 end
 
+-- Run the CLI with the same Lua executable that runs this suite.  The CI job
+-- installs LuaJIT, which does not necessarily provide a separate `lua` alias.
+local function current_lua()
+    return (arg and arg[-1]) or "luajit"
+end
+
 test("CLI rejects missing required arguments", function()
     local cases = {
         { command = "", fragment = "usage:" },
@@ -121,9 +127,13 @@ test("CLI rejects missing required arguments", function()
         { command = "--preset Easy --out", fragment = "missing value for --out" }
     }
     for _, case in ipairs(cases) do
-        local capture = os.tmpname()
-        local command = "lua " .. shell_quote(root .. "/cli.lua") .. " " .. case.command ..
+        local capture = (os.tmpname():match("[^/\\]+$") or "colisseum_cli_capture")
+        local invocation = shell_quote(current_lua()) .. " " .. shell_quote(root .. "/cli.lua") .. " " .. case.command ..
             " > " .. shell_quote(capture) .. " 2>&1"
+        -- Windows' command processor needs an extra outer quote when the first
+        -- command is a quoted executable path; POSIX shells do not.
+        local command = package.config:sub(1, 1) == "\\" and
+            ('cmd /d /s /c "' .. invocation .. '"') or invocation
         local status = os.execute(command)
         local text = read_file(capture)
         os.remove(capture)

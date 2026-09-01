@@ -9,6 +9,12 @@ local precedence = {
     ["^"] = 7
 }
 
+-- Luau compound assignment operators; each desugars to `t = t <op> e`.
+local compound_assign = {
+    ["+="] = true, ["-="] = true, ["*="] = true, ["/="] = true,
+    ["%="] = true, ["^="] = true, ["..="] = true,
+}
+
 local function parser(tokens)
     local object = { tokens = tokens, index = 1 }
 
@@ -31,6 +37,19 @@ local function parser(tokens)
             error("parser: expected '" .. value .. "' at " .. (current and current.start or "eof"))
         end
         return token
+    end
+
+    -- Skip a Luau generic parameter list `<T, U..., V = W>` after a function name
+    -- (type-level only; erased semantically). Handles nested `<...>` and `>>`.
+    function object:skip_generics()
+        if not (self:peek() and self:peek().value == "<") then return end
+        local depth = 0
+        while self:peek() do
+            local v = self:take().value
+            if v == "<" then depth = depth + 1
+            elseif v == ">" then depth = depth - 1; if depth <= 0 then return end
+            elseif v == ">>" then depth = depth - 2; if depth <= 0 then return end end
+        end
     end
 
     function object:primary()
@@ -81,6 +100,7 @@ local function parser(tokens)
         if token.value == "function" then
             -- Anonymous function expression: function(params) body end
             self:take()
+            self:skip_generics()
             self:expect("(")
             local parameters = {}
             if not self:take(")") then
@@ -189,6 +209,7 @@ local function parser(tokens)
                     target = { kind = "member", object = target, name = key.value, method = false, start = target.start, finish = key.finish }
                     if separator.value == ":" then is_method = true; break end
                 end
+                self:skip_generics()
                 self:expect("(")
                 local parameters = {}
                 if is_method then parameters[1] = "self" end
@@ -207,6 +228,7 @@ local function parser(tokens)
                 local closure = { kind = "function", name = "", local_function = false, parameters = parameters, body = body, start = token.start, finish = finish.finish }
                 return { kind = "assign", target = target, value = closure, start = token.start, finish = finish.finish }
             end
+            self:skip_generics()
             self:expect("(")
             local parameters = {}
             if not self:take(")") then
@@ -303,6 +325,15 @@ local function parser(tokens)
             return { kind = "return", values = values, start = token.start, finish = (self.tokens[self.index - 1] or token).finish }
         end
         local value = self:expression(0)
+        local peeked = self:peek()
+        if peeked and compound_assign[peeked.value] then
+            -- Luau compound assignment `t <op>= e` desugars to `t = t <op> e`.
+            self:take()
+            local rhs = self:expression(0)
+            local operator = peeked.value:sub(1, #peeked.value - 1)
+            local combined = { kind = "binary", operator = operator, left = value, right = rhs, start = value.start, finish = rhs.finish }
+            return { kind = "assign", target = value, value = combined, start = value.start, finish = rhs.finish }
+        end
         if self:peek() and self:peek().value == "," then
             -- multiple assignment: t1, t2, ... = v1, v2, ...
             local targets = { value }
