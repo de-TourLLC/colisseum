@@ -1,0 +1,8 @@
+# Local reference tree (not part of Colisseum)
+vendor/NewObfs/
+
+# Luau build artifacts
+build/
+
+# Local obfuscation outputs
+*.obfuscated.lua

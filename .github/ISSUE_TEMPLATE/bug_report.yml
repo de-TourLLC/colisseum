@@ -1,0 +1,113 @@
+name: Bug report
+description: Report a bug in the Colisseum obfuscator engine or its output.
+title: "[BUG] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in as much as you can —
+        a **minimal reproducible example** is the single most useful thing you can provide.
+
+        ⚠️ **Do not report security vulnerabilities here.** Use GitHub's private
+        vulnerability reporting (Security tab → Report a vulnerability), as described in
+        [`SECURITY.md`](../blob/main/SECURITY.md).
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is a bug in the obfuscator itself, not a request to deobfuscate/reverse an output.
+          required: true
+        - label: I am reporting a bug, not a security vulnerability (those go through the Security tab).
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description (error while obfuscating, generated script does not run, corrupted output, crash, etc).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happens. Include the full error message or stack trace if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproducible example (required)
+      description: >
+        The minimal ORIGINAL source that reproduces the issue. If the bug is a non-working
+        obfuscated file, include the minimal original source too — not just the obfuscated output.
+      render: lua
+    validations:
+      required: true
+  - type: dropdown
+    id: preset
+    attributes:
+      label: Preset used
+      options:
+        - Easy
+        - Medium
+        - Hard
+        - Full
+        - Total
+        - Secure
+        - Custom (paste config below)
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Custom configuration (if preset is Custom)
+      description: Paste the full step pipeline / options table you used.
+      render: lua
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Colisseum version (commit / tag / release)
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target dialect
+      options:
+        - lua
+        - luau
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime used to run the output
+      description: e.g. LuaJIT 2.1, Lua 5.1 / 5.3 / 5.4, Luau, Roblox, standalone.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else — does it only happen with certain option combinations, large scripts, etc.
+    validations:
+      required: false

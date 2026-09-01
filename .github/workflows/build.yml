@@ -1,0 +1,48 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Run LuaJIT tests
+        run: luajit tests/run.lua
+      - name: Run step-group tests
+        run: |
+          for test in tests/groups/*.lua; do
+            echo "== $test =="
+            luajit "$test"
+          done
+      - name: Run backend adapter tests
+        run: luajit tests/luau_vm.lua
+      - name: Run adversarial tests
+        run: luajit tests/adversarial.lua
+      - name: Run fuzz tests
+        run: luajit tests/fuzz.lua
+      - name: Run differential tests
+        run: luajit tests/differential.lua
+      - name: Verify vendor licenses
+        run: luajit tools/verify-vendor-licenses.lua
+      - name: Run benchmarks
+        run: luajit benchmarks/run.lua
+
+  luau:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Configure Luau
+        run: cmake -S vendor/Luau -B build/luau -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=ON -DLUAU_BUILD_TESTS=ON
+      - name: Build Luau
+        run: cmake --build build/luau --config Release --parallel 2
+      - name: Run Luau tests
+        run: cmake --build build/luau --target Luau.Conformance --config Release

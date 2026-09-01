@@ -1,0 +1,6 @@
+[submodule "vendor/Fiu"]
+	path = vendor/Fiu
+	url = https://github.com/rce-incorporated/Fiu.git
+[submodule "vendor/Luau"]
+	path = vendor/Luau
+	url = https://github.com/luau-lang/luau.git

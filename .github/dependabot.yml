@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Group all updates into a single weekly PR instead of one per action
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    # Reasonable limit of open PRs at a time
+    open-pull-requests-limit: 10
+    # Label PRs so they are easy to filter/prioritize
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"
