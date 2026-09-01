@@ -16,6 +16,10 @@ local function banner()
     end
 end
 
+-- On Windows, switch the console to UTF-8 so the progress bar's spinner/box
+-- characters render instead of showing as mojibake in the legacy code page.
+if package.config:sub(1, 1) == "\\" then pcall(os.execute, "chcp 65001 >nul 2>nul") end
+
 banner()
 
 local Errors = require("src.core.errors")
