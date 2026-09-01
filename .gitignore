@@ -1,8 +1,38 @@
 # Local reference tree (not part of Colisseum)
 vendor/NewObfs/
 
-# Luau build artifacts
+# Luau build artifacts and binaries
 build/
 
-# Local obfuscation outputs
+# Obfuscation outputs (regenerable; reveal structure -- keep private)
 *.obfuscated.lua
+*.out.lua
+*.out.luau
+output.lua
+output*.lua
+
+# Local scripts / test payloads (your own inputs -- not public)
+test.lua
+official-test.lua
+env-probe.luau
+*.probe.lua
+*.probe.luau
+
+# CLI captures, logs, scratch
+*-capture.txt
+*.log
+*.tmp
+scratchpad/
+tmp/
+
+# Tooling / assistant instructions (local only)
+CLAUDE.md
+.claude/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
