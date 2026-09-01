@@ -693,8 +693,12 @@ local function compile_function(params, body, is_vararg, parent)
         -- declare loop variable at base+3
         local cap = fs.captured[stmt.name] == true
         fs.actives[#fs.actives + 1] = { name = stmt.name, reg = base + 3, captured = cap }
-        if cap then emit(OP.NEWCELL, base + 3, base + 3) end
         local body_start = here()
+        -- Box the loop variable INSIDE the body (FORLOOP writes the raw value into
+        -- base+3 each iteration and jumps here), so a fresh cell exists per iteration
+        -- for closures that capture it. Emitting NEWCELL before body_start would be
+        -- unreachable (the jumps skip it) and leave the register unboxed.
+        if cap then emit(OP.NEWCELL, base + 3, base + 3) end
         fs.freereg = fs.nactive
         compile_block(stmt.body)
         code[prep][3] = here() - prep  -- FORPREP jumps to the FORLOOP emitted next
@@ -731,9 +735,15 @@ local function compile_function(params, body, is_vararg, parent)
             local name = stmt.names[i]
             local cap = fs.captured[name] == true
             fs.actives[#fs.actives + 1] = { name = name, reg = base + 2 + i, captured = cap }
-            if cap then emit(OP.NEWCELL, base + 2 + i, base + 2 + i) end
         end
         local body_start = here()
+        -- Box captured loop vars INSIDE the body (TFORCALL writes raw values, then
+        -- TFORLOOP jumps here); a fresh cell per iteration is created for closures.
+        -- The control register (base+3) keeps its raw value for the iterator protocol
+        -- because TFORLOOP/TFORCALL run before this point each iteration.
+        for i = 1, nnames do
+            if fs.captured[stmt.names[i]] == true then emit(OP.NEWCELL, base + 2 + i, base + 2 + i) end
+        end
         fs.freereg = fs.nactive
         compile_block(stmt.body)
         code[jmp_to_call][2] = here() - jmp_to_call

@@ -71,6 +71,9 @@ local cases = {
     { "nil in table",     "local t={} t.x=nil t.y=5 local c=0 for k in pairs(t) do c=c+1 end return c*100+t.y" },
     { "semicolons",       "local a=1; local b=2; return a+b" },
     { "deep recursion",   "local function s(n) if n==0 then return 0 end return n+s(n-1) end return s(200)" },
+    { "for-var capture",   "local t={} for i=1,3 do t[i]=function() return i end end return t[1]()+t[2]()+t[3]()" },
+    { "forin-var capture", "local fns={} for _,v in ipairs({10,20,30}) do fns[#fns+1]=function() return v end end return fns[1]()+fns[2]()+fns[3]()" },
+    { "for-var capture 1",  "local s=0 for i=1,4 do local f=function() return i*i end s=s+f() end return s" },
     { "coroutine yield",   "local co=coroutine.wrap(function() for i=1,3 do coroutine.yield(i*10) end return 99 end) return co()+co()+co()+co()" },
     { "coroutine resume",  "local function g(n) for i=1,n do coroutine.yield(i*i) end end local co=coroutine.create(g) local t={} local ok,v=coroutine.resume(co,4) while ok and v do t[#t+1]=v ok,v=coroutine.resume(co) end return t[1]+t[2]+t[3]+t[4]" },
 }
