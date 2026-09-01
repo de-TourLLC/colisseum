@@ -117,6 +117,66 @@ end
 
 local obfuscator = require("src.obfuscator")
 
+-- Progress bar + rotating funny tips shown on stderr while the pipeline runs.
+math.randomseed(os.time() + math.floor(((os.clock() or 0) * 1e6) % 1e6))
+local USE_COLOR = not os.getenv("NO_COLOR")
+local TIPS = {
+    "Permutando opcodes pa' que el skid llore",
+    "Cifrando con ChaCha (no la de tu barrio)",
+    "Metiendo capas como lasagna",
+    "El deobfuscador ya esta sudando frio",
+    "Renombrando todo a itzCool_jLjLjL",
+    "Si lo crackean, avisame como lo hiciste",
+    "task.wait() pa' que Roblox no se queje",
+    "Inyectando codigo basura gourmet",
+    "Bytecode mas encriptado que tu ex bloqueado",
+    "Cada build es unico, como vos rey",
+    "Confundiendo al de IDA Pro",
+    "Aplanando el control flow hasta marear",
+    "Predicados opacos: matematica para llorar",
+    "Roblox no sabe lo que le espera",
+    "Escondiendo strings como secretos",
+    "Anti-tamper activado, no toques nada",
+    "Esto no lo abre ni con paciencia",
+    "Generando ruido pa' despistar",
+    "Detectando executors chismosos",
+    "El VM quedo mas ofuscado que mi vida",
+    "Comprimiendo maldad en una sola linea",
+    "99 problemas pero un deobf no es uno",
+    "Lento de crackear a proposito, de nada",
+    "Casi listo, aguanta el ansia",
+    "Mezclando el bytecode como DJ",
+    "Poniendo trampas para curiosos",
+}
+local last_tip
+local function pick_tip()
+    if #TIPS <= 1 then return TIPS[1] or "" end
+    local t
+    repeat t = TIPS[math.random(#TIPS)] until t ~= last_tip
+    last_tip = t
+    return t
+end
+local function progress(done, total, step)
+    local width = 22
+    local ratio = total > 0 and (done / total) or 1
+    if ratio > 1 then ratio = 1 end
+    local filled = math.floor(width * ratio + 0.5)
+    local bar = string.rep("#", filled) .. string.rep("-", width - filled)
+    local pct = math.floor(ratio * 100 + 0.5)
+    local label = step
+    if step == "vm" then label = "empaquetando VM (tarda)" end
+    if step == "done" then label = "listo!" end
+    local tip = pick_tip()
+    if USE_COLOR then
+        io.stderr:write(string.format("\r\027[36m  [%s]\027[0m \027[1m%3d%%\027[0m  \027[90m%-24s\027[0m \027[33m%s\027[0m\027[K",
+            bar, pct, label, tip))
+    else
+        io.stderr:write(string.format("\r  [%s] %3d%%  %-24s %s   ", bar, pct, label, tip))
+    end
+    io.stderr:flush()
+    if step == "done" or done >= total then io.stderr:write("\n") end
+end
+
 -- Obfuscate one in-memory source string, returning (output, error). Loaded once
 -- and reused across every file in a batch, so there is no per-file startup cost.
 local function obfuscate_source(source)
@@ -142,12 +202,14 @@ local function obfuscate_source(source)
                 target = arguments.luau and "luau" or "lua",
                 compiler = compiler,
                 fiu = arguments.fiu,
-                compiler_options = { roblox = arguments.roblox }
+                compiler_options = { roblox = arguments.roblox },
+                on_progress = progress
             })
         end
         local transformed = obfuscator.obfuscate(source, {
             preset = aliases[preset],
-            target = arguments.luau and "luau" or "lua"
+            target = arguments.luau and "luau" or "lua",
+            on_progress = progress
         })
         return transformed
     end)

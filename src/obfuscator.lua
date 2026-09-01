@@ -189,8 +189,10 @@ function Obfuscator.obfuscate(source, options)
     -- fresh seed is drawn so every obfuscation differs -- distinct keys, names,
     -- injected values, and tripwires -- even for identical input.
     local run_seed = Entropy.normalize(options.seed) or Entropy.collect()
+    local total_steps = #pipeline
     for step_index, item in ipairs(pipeline) do
         local name = type(item) == "string" and item or item[1]
+        if type(options.on_progress) == "function" then options.on_progress(step_index - 1, total_steps, name) end
         local step = load_step(name)
         if type(step) ~= "table" or type(step.apply) ~= "function" then
             error("obfuscator: invalid step " .. tostring(name))
@@ -218,6 +220,7 @@ function Obfuscator.obfuscate(source, options)
             end
         end
     end
+    if type(options.on_progress) == "function" then options.on_progress(total_steps, total_steps, "done") end
     return source
 end
 
@@ -260,7 +263,8 @@ function Obfuscator.package_luau(source, options)
     local transformed = Obfuscator.obfuscate(source, {
         steps = steps,
         target = target,
-        seed = options.seed
+        seed = options.seed,
+        on_progress = options.on_progress
     })
     return load_step("vm").apply(transformed, {
         target = target,
