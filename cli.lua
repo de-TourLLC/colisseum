@@ -1,19 +1,33 @@
+-- 24-bit color helpers for a purple -> white gradient theme (no black).
+local RESET = "\27[0m"
+local function fg(r, g, b) return string.format("\27[38;2;%d;%d;%dm", r, g, b) end
+local function lerp(a, b, t) local v = math.floor(a + (b - a) * t + 0.5); if v < 0 then v = 0 elseif v > 255 then v = 255 end; return v end
+-- t in [0,1]: 0 = purple (#A855F7), 1 = white.
+local function grad(t) return lerp(168, 255, t), lerp(85, 255, t), lerp(247, 255, t) end
+
 local function banner()
-    -- Pure ASCII so it renders correctly in every terminal and code page
-    -- (the previous Unicode block art showed as mojibake on Windows consoles).
+    -- Pure ASCII so it renders in every code page; colored as a vertical
+    -- purple->white gradient (white at the top fading to purple at the bottom).
     local art = [[
-    ::::::::   ::::::::  :::        ::::::::::: ::::::::   ::::::::  :::::::::: :::    ::: ::::    ::::  
-    :+:    :+: :+:    :+: :+:            :+:    :+:    :+: :+:    :+: :+:        :+:    :+: +:+:+: :+:+:+ 
-    +:+        +:+    +:+ +:+            +:+    +:+        +:+        +:+        +:+    +:+ +:+ +:+:+ +:+ 
-    +#+        +#+    +:+ +#+            +#+    +#++:++#++ +#++:++#++ +#++:++#   +#+    +:+ +#+  +:+  +#+ 
-    +#+        +#+    +#+ +#+            +#+           +#+        +#+ +#+        +#+    +#+ +#+       +#+ 
-    #+#    #+# #+#    #+# #+#            #+#    #+#    #+# #+#    #+# #+#        #+#    #+# #+#       #+# 
+    ::::::::   ::::::::  :::        ::::::::::: ::::::::   ::::::::  :::::::::: :::    ::: ::::    ::::
+    :+:    :+: :+:    :+: :+:            :+:    :+:    :+: :+:    :+: :+:        :+:    :+: +:+:+: :+:+:+
+    +:+        +:+    +:+ +:+            +:+    +:+        +:+        +:+        +:+    +:+ +:+ +:+:+ +:+
+    +#+        +#+    +:+ +#+            +#+    +#++:++#++ +#++:++#++ +#++:++#   +#+    +:+ +#+  +:+  +#+
+    +#+        +#+    +#+ +#+            +#+           +#+        +#+ +#+        +#+    +#+ +#+       +#+
+    #+#    #+# #+#    #+# #+#            #+#    #+#    #+# #+#    #+# #+#        #+#    #+# #+#       #+#
     ########   ########  ########## ########### ########   ########  ##########  ########  ###       ### ]]
     if os.getenv("NO_COLOR") then
         io.stderr:write(art, "\n\n")
-    else
-        io.stderr:write("\27[35m", art, "\27[0m\n\n")
+        return
     end
+    local lines = {}
+    for line in (art .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = line end
+    local n = #lines
+    for i, line in ipairs(lines) do
+        local t = (n > 1) and (1 - (i - 1) / (n - 1)) or 1 -- top = white, bottom = purple
+        io.stderr:write(fg(grad(t)), line, "\n")
+    end
+    io.stderr:write(RESET, "\n")
 end
 
 -- On Windows, switch the console to UTF-8 so the progress bar's spinner/box
@@ -189,11 +203,21 @@ local function progress(fraction, label)
     local name = (label or ""):gsub("^vm:", "")
     if done then name = "done" end
     if USE_COLOR then
-        local mark = done and ("\027[92m" .. CHECK) or ("\027[96m" .. SPIN[spin_i])
-        local bar = "\027[96m" .. string.rep(BAR_ON, filled) .. "\027[90m" .. string.rep(BAR_OFF, width - filled)
-        io.stderr:write(string.format(
-            "\r%s\027[0m \027[1m%-11s\027[0m %s\027[0m \027[1m%3d%%\027[0m \027[90m%-9s\027[0m \027[35m%-22s\027[0m \027[90m%s\027[0m\027[K",
-            mark, done and "Done" or "Obfuscating", bar, pct, timetext, name, cur_tip))
+        -- Bar: each filled cell is a purple->white gradient step; empty cells are a
+        -- dim purple (never black).
+        local cells = {}
+        for j = 1, width do
+            if j <= filled then cells[j] = fg(grad((j - 1) / (width > 1 and (width - 1) or 1))) .. BAR_ON
+            else cells[j] = fg(96, 66, 128) .. BAR_OFF end
+        end
+        io.stderr:write("\r",
+            (done and fg(200, 170, 255) or fg(grad(0.4))), (done and CHECK or SPIN[spin_i]), RESET, " ",
+            "\27[1m", fg(grad(0.85)), (done and "Done       " or "Obfuscating"), RESET, " ",
+            table.concat(cells), RESET, " ",
+            "\27[1m", fg(255, 255, 255), string.format("%3d%%", pct), RESET, " ",
+            fg(grad(0.55)), string.format("%-9s", timetext), RESET, " ",
+            fg(grad(0.4)), string.format("%-22s", name), RESET, " ",
+            fg(210, 180, 255), cur_tip, RESET, "\27[K")
     else
         io.stderr:write(string.format("\r%s %-11s [%s%s] %3d%% %-9s %-22s %s   ",
             done and "OK" or ">", done and "Done" or "Obfuscating",
