@@ -71,19 +71,34 @@ function Step.apply(source, options)
     for code = 1, opcount do permuted_names[perm[code]] = RegBytecode.NAME[code] end
     local names_literal = "{\"" .. table.concat(permuted_names, "\",\"") .. "\"}"
     local bc_raw = read(core_dir .. "reg-bytecode.lua"):gsub("local names = %b{}", "local names = " .. names_literal, 1)
-    -- Mangle the embedded interpreter's own identifiers (execute_proto, R, K, the
-    -- opcode locals, ...) so it does not ship as a readable register VM. Only the
-    -- module's local names change; the .OP/.NAME/.decode field interface between
-    -- the two embedded modules is preserved (rename never touches table keys).
-    -- Guarded: a rename failure just ships the (still minified) unrenamed source.
+    -- Inline the permuted opcode numbers into the runtime dispatch, so no readable
+    -- OP.<NAME> field names (MOVE, LOADK, ...) survive -- the loop compares plain
+    -- numbers. This is what keeps runtime fast even after obfuscation.
+    local opcode_of = RegBytecode.opcodes()
+    local rt_raw = read(core_dir .. "reg-runtime.lua"):gsub("OP%.([A-Z_]+)", function(nm)
+        local c = opcode_of[nm]; return c and tostring(perm[c]) or nil
+    end)
+    -- Obfuscate the interpreter SOURCE itself (fast: small source, payload not yet
+    -- attached). rename mangles identifiers everywhere; string encryption runs ONLY
+    -- on the bytecode module (opcode name strings), whose strings are touched once
+    -- at load -- never inside the hot register-dispatch loop -- so runtime speed is
+    -- unchanged. Each pass is guarded: a failure just keeps the previous source.
     local Rename = require("src.steps.naming.rename")
-    local function harden(src, salt)
-        local ok, out = pcall(function() return Rename.apply(src, { seed = Package.digest(salt .. "|" .. tostring(seed)) }) end)
-        if ok and type(out) == "string" and #out > 0 then return out end
+    local StepPaths = require("src.core.step-paths")
+    local SplitStrings = require(StepPaths.module("split-strings"))
+    local ConstantArray = require(StepPaths.module("constant-array"))
+    local function harden(src, salt, encrypt_strings)
+        local seed0 = Package.digest(salt .. "|" .. tostring(seed))
+        local function pass(fn) local ok, out = pcall(fn); if ok and type(out) == "string" and #out > 0 then src = out end end
+        pass(function() return Rename.apply(src, { seed = seed0 }) end)
+        if encrypt_strings then
+            pass(function() return SplitStrings.apply(src, { seed = seed0, target = "luau" }) end)
+            pass(function() return ConstantArray.apply(src, { seed = seed0, target = "luau" }) end)
+        end
         return src
     end
-    local bytecode_src = Minify.apply(harden(bc_raw, "regbc"))
-    local runtime_src = Minify.apply(harden(read(core_dir .. "reg-runtime.lua"), "regrt"))
+    local bytecode_src = Minify.apply(harden(bc_raw, "regbc", true))
+    local runtime_src = Minify.apply(harden(rt_raw, "regrt", false))
 
     report(0.92, "vm:finishing")
     local B, R, C, P, V, E = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "V", prefix .. "E"
