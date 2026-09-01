@@ -49,6 +49,30 @@ function Step.apply(source, options)
     local type_depth = 0
     local local_function = false
     local function_header = false
+    -- `local x = <init>`: the just-declared names are NOT in scope inside their own
+    -- initializer (Lua evaluates the RHS in the enclosing scope). Track them so a
+    -- self-reference like `local print = print` resolves the RHS to the outer/global
+    -- binding instead of renaming it to the new (still-nil) local.
+    local in_local_rhs = false
+    local is_local_decl = false
+    local local_pending = {}
+    local reserved_value = { ["true"] = true, ["false"] = true, ["nil"] = true }
+    -- Tokens that CONTINUE an expression after a value (so the local's initializer
+    -- is not finished). Anything else following a value-ending token starts a new
+    -- statement, which is where the initializer ends.
+    local continuation = {
+        ["+"] = true, ["-"] = true, ["*"] = true, ["/"] = true, ["%"] = true, ["^"] = true,
+        [".."] = true, ["=="] = true, ["~="] = true, ["<"] = true, [">"] = true, ["<="] = true,
+        [">="] = true, ["//"] = true, ["and"] = true, ["or"] = true, ["."] = true, [":"] = true,
+        ["["] = true, ["("] = true, ["{"] = true, [","] = true, ["="] = true,
+    }
+    local function ends_value(tok)
+        if not tok then return false end
+        if tok.kind == "identifier" then return (not reserved[tok.value]) or reserved_value[tok.value] end
+        if tok.kind == "number" or tok.kind == "string" then return true end
+        local v = tok.value
+        return v == ")" or v == "]" or v == "}" or v == "..." or v == "end"
+    end
     local function push(kind)
         stack[#stack + 1] = current
         current = scope(current, kind)
@@ -67,6 +91,15 @@ function Step.apply(source, options)
         local value = token.value
         local before = previous(index)
         local after = next_token(index)
+        -- A local's initializer ends once its value is complete and the next token
+        -- starts a new statement (i.e. the previous token ended a value and this one
+        -- does not continue the expression). Clearing here lets later uses of the new
+        -- locals resolve to them, not the outer scope. `;` always ends it.
+        if in_local_rhs and (value == ";"
+            or (ends_value(before) and not continuation[value] and token.kind ~= "string")) then
+            in_local_rhs = false
+            local_pending = {}
+        end
         if token.kind == "identifier" and not reserved[value] then
             local field = before and (before.value == "." or before.value == ":")
             local table_key = after and after.value == "=" and braces > 0
@@ -90,22 +123,43 @@ function Step.apply(source, options)
                 function_header = true
             elseif declaring or for_declaration then
                 if not field then
+                    -- A name this `local` introduces for the FIRST time in this scope
+                    -- must not resolve to itself inside its own initializer (it is nil
+                    -- there). A name it merely re-declares/shadows keeps resolving to
+                    -- the prior binding, so only newly-created names get the guard.
+                    local newly = is_local_decl and current.bindings[value] == nil
                     local binding = declaration(current, value, generator, declarations)
                     declarations[token.start] = binding
+                    if newly then local_pending[value] = true end
                     declaring = after and after.value == ","
+                    -- LHS of a `local ... = ...` just ended and an initializer follows:
+                    -- enter RHS mode so self-references resolve to the outer scope.
+                    if is_local_decl and not declaring and after and after.value == "=" then
+                        in_local_rhs = true
+                    end
                     for_declaration = false
                 end
             elseif not field and not table_key then
-                local binding = find(current, value)
+                -- Inside a `local` initializer, a reference to a name being declared
+                -- by the SAME statement is a use of the OUTER binding (or a global),
+                -- never the new local.
+                local binding
+                if in_local_rhs and local_pending[value] then
+                    binding = current.parent and find(current.parent, value) or nil
+                else
+                    binding = find(current, value)
+                end
                 if binding then replacements[token.start] = binding.output end
             end
         elseif value == "local" then
             declaring = true
+            is_local_decl = true
         elseif declaring and value == "function" then
             declaring = false
             local_function = true
         elseif value == "for" then
             for_declaration = true
+            is_local_decl = false
         elseif value == "function" then
             push("function")
             function_header = true

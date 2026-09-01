@@ -64,6 +64,26 @@ return value, record.value, decorate(value), record.value
     equal(member_after, "block", "nested shadow binding")
 end)
 
+test("rename keeps self-referential local initializers pointing at the outer binding", function()
+    -- `local x = x` binds a NEW local x whose initializer reads the OUTER/global x.
+    -- The RHS must not be renamed to the still-nil new local, or the localized
+    -- global (a common idiom: `local print = print`) becomes nil and later calls
+    -- crash. Exercised in combination with a preceding loop and multi-name lists,
+    -- which is where the initializer-end detection previously mis-fired.
+    local cases = {
+        { "local print = print print(1) return 41 + 1", 42 },
+        { "local a = 1 local a = a + 1 return a", 2 },
+        { "local n = 5 local n = n * 2 return n", 10 },
+        { "local c = 0 repeat c = c + 1 until c == 5 local p = print p(c) return c", 5 },
+        { "local p, q = print, tostring return q(7)", "7" },
+    }
+    for _, case in ipairs(cases) do
+        local output = Rename.apply(case[1], { seed = 3 })
+        local chunk = assert(loadstring(output), "rename produced invalid Lua for: " .. case[1])
+        equal(chunk(), case[2], "self-ref initializer: " .. case[1])
+    end
+end)
+
 test("lexer keeps long strings and comments opaque at large sizes", function()
     local payload = string.rep("identifier_should_not_be_renamed ", 2048)
     local input = "--[=[" .. payload .. "]=]\nlocal text = [=[" .. payload .. "]=]\nreturn text"
