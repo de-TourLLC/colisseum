@@ -1,5 +1,10 @@
 local Step = { name = "vm", version = 4 }
 
+-- The VM backends embed their input as encrypted numeric data inside a fixed,
+-- always-valid chunk template, so the (large) output never needs re-lexing. This
+-- skips an expensive full-parse validation of the final bundle in the pipeline.
+Step.emits_valid = true
+
 Step.metadata = {
     id = Step.name,
     kind = "backend",

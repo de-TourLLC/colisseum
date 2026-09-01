@@ -189,10 +189,17 @@ function Obfuscator.obfuscate(source, options)
     -- fresh seed is drawn so every obfuscation differs -- distinct keys, names,
     -- injected values, and tripwires -- even for identical input.
     local run_seed = Entropy.normalize(options.seed) or Entropy.collect()
-    local total_steps = #pipeline
+    local report = type(options.on_progress) == "function" and options.on_progress or nil
+    -- The VM/backend step dominates build time, so weight it heavily; the bar and
+    -- ETA then track real work instead of raw step count.
+    local weights, total_w, acc_w = {}, 0, 0
+    for i, item in ipairs(pipeline) do
+        weights[i] = ((type(item) == "string" and item or item[1]) == "vm") and 12 or 1
+        total_w = total_w + weights[i]
+    end
     for step_index, item in ipairs(pipeline) do
         local name = type(item) == "string" and item or item[1]
-        if type(options.on_progress) == "function" then options.on_progress(step_index - 1, total_steps, name) end
+        if report then report(acc_w / total_w, name) end
         local step = load_step(name)
         if type(step) ~= "table" or type(step.apply) ~= "function" then
             error("obfuscator: invalid step " .. tostring(name))
@@ -208,7 +215,14 @@ function Obfuscator.obfuscate(source, options)
         if settings.seed == nil then
             settings.seed = Entropy.mix(run_seed, name .. ":" .. step_index)
         end
+        -- Let the (slow) VM backend report sub-phase progress within its weighted
+        -- share, so the bar and ETA keep moving during packaging.
+        if report and name == "vm" then
+            local base, span = acc_w, weights[step_index]
+            settings.progress = function(s, sub) report((base + (s or 0) * span) / total_w, sub or "vm") end
+        end
         source = step.apply(source, settings)
+        acc_w = acc_w + weights[step_index]
         if type(source) ~= "string" then error("obfuscator: step " .. tostring(name) .. " returned non-string") end
         -- Generator steps (vm, crypto) embed their input as numeric data inside a
         -- fixed, always-valid template, so their (often very large) output does not
@@ -220,7 +234,7 @@ function Obfuscator.obfuscate(source, options)
             end
         end
     end
-    if type(options.on_progress) == "function" then options.on_progress(total_steps, total_steps, "done") end
+    if report then report(1, "done") end
     return source
 end
 

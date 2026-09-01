@@ -43,6 +43,8 @@ function Step.apply(source, options)
     -- Per-build opcode permutation: shuffle the VM's opcode numbers, remap the
     -- compiled program to match, and reorder the embedded opcode table, so no two
     -- builds share an encoding and a generic decoder cannot assume "opcode 1 = MOVE".
+    local report = type(options.progress) == "function" and options.progress or function() end
+    report(0.0, "vm:compiling")
     local mainproto = RegCompiler.compile(source)
     local opcount = RegBytecode.COUNT
     local perm = {}
@@ -54,14 +56,17 @@ function Step.apply(source, options)
     end
     remap(mainproto)
 
+    report(0.4, "vm:encoding")
     local bytecode = RegBytecode.encode(mainproto)
 
     -- ChaCha20 decryptor expression -> plaintext register bytecode string.
+    report(0.5, "vm:encrypting")
     local sealed = Package.seal(bytecode, seed, prefix .. "s")
 
     -- Embed the VM with its opcode table permuted to match. reg-bytecode holds the
     -- `names` list the interpreter caches opcode ids from; reorder it so OP.<X>
     -- yields the per-build number and the dispatch (op == <X>) stays consistent.
+    report(0.68, "vm:mangling")
     local permuted_names = {}
     for code = 1, opcount do permuted_names[perm[code]] = RegBytecode.NAME[code] end
     local names_literal = "{\"" .. table.concat(permuted_names, "\",\"") .. "\"}"
@@ -80,6 +85,7 @@ function Step.apply(source, options)
     local bytecode_src = Minify.apply(harden(bc_raw, "regbc"))
     local runtime_src = Minify.apply(harden(read(core_dir .. "reg-runtime.lua"), "regrt"))
 
+    report(0.92, "vm:finishing")
     local B, R, C, P, V, E = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "V", prefix .. "E"
     local environment = "(function() local g=rawget(_G,\"getfenv\") return (type(g)==\"function\" and g(0)) or _G end)()"
     local bundle = table.concat({

@@ -117,36 +117,41 @@ end
 
 local obfuscator = require("src.obfuscator")
 
--- Progress bar + rotating funny tips shown on stderr while the pipeline runs.
+-- A modern installer-style progress line (braille spinner + smooth bar + ETA +
+-- rotating tips), drawn on stderr while the pipeline runs.
 math.randomseed(os.time() + math.floor(((os.clock() or 0) * 1e6) % 1e6))
 local USE_COLOR = not os.getenv("NO_COLOR")
+local SPIN = { "\226\160\139", "\226\160\153", "\226\160\185", "\226\160\184", "\226\160\188",
+               "\226\160\180", "\226\160\166", "\226\160\167", "\226\160\135", "\226\160\143" } -- ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
+local BAR_ON, BAR_OFF, CHECK = "\226\148\129", "\226\148\128", "\226\156\148" -- ━ (heavy) ─ (light) ✔
 local TIPS = {
-    "Permutando opcodes pa' que el skid llore",
-    "Cifrando con ChaCha (no la de tu barrio)",
-    "Metiendo capas como lasagna",
-    "El deobfuscador ya esta sudando frio",
-    "Renombrando todo a itzCool_jLjLjL",
-    "Si lo crackean, avisame como lo hiciste",
-    "task.wait() pa' que Roblox no se queje",
-    "Inyectando codigo basura gourmet",
-    "Bytecode mas encriptado que tu ex bloqueado",
-    "Cada build es unico, como vos rey",
-    "Confundiendo al de IDA Pro",
-    "Aplanando el control flow hasta marear",
-    "Predicados opacos: matematica para llorar",
-    "Roblox no sabe lo que le espera",
-    "Escondiendo strings como secretos",
-    "Anti-tamper activado, no toques nada",
-    "Esto no lo abre ni con paciencia",
-    "Generando ruido pa' despistar",
-    "Detectando executors chismosos",
-    "El VM quedo mas ofuscado que mi vida",
-    "Comprimiendo maldad en una sola linea",
-    "99 problemas pero un deobf no es uno",
-    "Lento de crackear a proposito, de nada",
-    "Casi listo, aguanta el ansia",
-    "Mezclando el bytecode como DJ",
-    "Poniendo trampas para curiosos",
+    "Permuting opcodes so the skid cries",
+    "Encrypting with ChaCha (not the dance)",
+    "Stacking layers like a lasagna",
+    "The deobfuscator is already sweating",
+    "Renaming everything to itzCool_jLjLjL",
+    "If you crack this, tell me how you did it",
+    "task.wait() so Roblox stops whining",
+    "Injecting gourmet junk code",
+    "Bytecode more encrypted than your ex's heart",
+    "Every build is unique, like you, king",
+    "Confusing the guy with IDA Pro open",
+    "Flattening control flow until it's dizzy",
+    "Opaque predicates: math that makes you weep",
+    "Roblox has no idea what's coming",
+    "Hiding strings like little secrets",
+    "Anti-tamper armed, do not touch anything",
+    "Not even patience will open this one",
+    "Generating noise to throw them off",
+    "Sniffing out nosy executors",
+    "The VM is now more obfuscated than my life",
+    "Compressing pure evil into a single line",
+    "99 problems but a deobf ain't one",
+    "Slow to crack on purpose, you're welcome",
+    "Almost there, hold your horses",
+    "Mixing the bytecode like a DJ",
+    "Setting little traps for the curious",
+    "Teaching the reverse-engineer some humility",
 }
 local last_tip
 local function pick_tip()
@@ -156,25 +161,42 @@ local function pick_tip()
     last_tip = t
     return t
 end
-local function progress(done, total, step)
-    local width = 22
-    local ratio = total > 0 and (done / total) or 1
-    if ratio > 1 then ratio = 1 end
-    local filled = math.floor(width * ratio + 0.5)
-    local bar = string.rep("#", filled) .. string.rep("-", width - filled)
-    local pct = math.floor(ratio * 100 + 0.5)
-    local label = step
-    if step == "vm" then label = "empaquetando VM (tarda)" end
-    if step == "done" then label = "listo!" end
-    local tip = pick_tip()
+local function fmt_time(sec)
+    if not sec or sec < 0 then sec = 0 end
+    if sec >= 60 then return string.format("%dm%02ds", math.floor(sec / 60), math.floor(sec % 60)) end
+    return string.format("%.0fs", sec)
+end
+local prog_start, spin_i, cur_tip, tip_at = nil, 0, nil, 0
+-- progress(fraction 0..1, label). Reports a whole-build fraction; the pipeline and
+-- the VM backend both feed this so the bar and ETA advance through the slow parts.
+local function progress(fraction, label)
+    local now = os.clock()
+    prog_start = prog_start or now
+    if not fraction or fraction < 0 then fraction = 0 elseif fraction > 1 then fraction = 1 end
+    local done = label == "done" or fraction >= 1
+    if not cur_tip or now - tip_at > 1.1 then cur_tip = pick_tip(); tip_at = now end
+    spin_i = (spin_i % #SPIN) + 1
+    local width = 26
+    local filled = math.floor(width * fraction + 0.5)
+    local pct = math.floor(fraction * 100 + 0.5)
+    local elapsed = now - prog_start
+    local eta = done and elapsed or ((fraction > 0.02) and elapsed * (1 - fraction) / fraction or nil)
+    local timetext = (done and "in " or "eta ") .. (eta and fmt_time(eta) or "--")
+    local name = (label or ""):gsub("^vm:", "")
+    if done then name = "done" end
     if USE_COLOR then
-        io.stderr:write(string.format("\r\027[36m  [%s]\027[0m \027[1m%3d%%\027[0m  \027[90m%-24s\027[0m \027[33m%s\027[0m\027[K",
-            bar, pct, label, tip))
+        local mark = done and ("\027[92m" .. CHECK) or ("\027[96m" .. SPIN[spin_i])
+        local bar = "\027[96m" .. string.rep(BAR_ON, filled) .. "\027[90m" .. string.rep(BAR_OFF, width - filled)
+        io.stderr:write(string.format(
+            "\r%s\027[0m \027[1m%-11s\027[0m %s\027[0m \027[1m%3d%%\027[0m \027[90m%-9s\027[0m \027[35m%-22s\027[0m \027[90m%s\027[0m\027[K",
+            mark, done and "Done" or "Obfuscating", bar, pct, timetext, name, cur_tip))
     else
-        io.stderr:write(string.format("\r  [%s] %3d%%  %-24s %s   ", bar, pct, label, tip))
+        io.stderr:write(string.format("\r%s %-11s [%s%s] %3d%% %-9s %-22s %s   ",
+            done and "OK" or ">", done and "Done" or "Obfuscating",
+            string.rep("#", filled), string.rep("-", width - filled), pct, timetext, name, cur_tip))
     end
     io.stderr:flush()
-    if step == "done" or done >= total then io.stderr:write("\n") end
+    if done then io.stderr:write("\n") end
 end
 
 -- Obfuscate one in-memory source string, returning (output, error). Loaded once
