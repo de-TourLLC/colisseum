@@ -99,25 +99,31 @@ local presets = {
         { "rename", { } },
         { "vm", { } }
     },
-    -- Maximum client-side hardening, tuned to stay fast at runtime: every static
-    -- layer (control flow, opaque predicates, string encryption, renaming,
-    -- field indirection, anti-tamper + executor/timing detection) feeds the
+    -- "fortress" is the absolute-maximum preset: every hardening layer, tuned to
+    -- the highest safe budgets, applied in TWO independent waves so identifiers,
+    -- predicates, tripwires, and decoys are re-randomized from fresh per-step
+    -- seeds after the first coat is already in place (repeat passes are
+    -- intentional here -- each wave uses its own derived seed). The static
+    -- layers (control flow, opaque predicates, string encryption, renaming,
+    -- field indirection, anti-tamper + executor/timing detection) feed the
     -- REGISTER VM backend, whose encrypted+permuted bytecode and mangled
     -- interpreter carry the protection while running 2-6x faster than the
-    -- tree-walker. Runs on Lua and Luau/Roblox. A deobfuscator must strip every
-    -- layer, then decrypt per-build bytecode, then reverse a per-build opcode
-    -- permutation over a name-mangled interpreter -- the runtime stays cheap.
+    -- tree-walker, then a final minify keeps the shipped output lean
+    -- ("optimized"). A deobfuscator must strip every layer twice, then decrypt
+    -- per-build bytecode, then reverse a per-build opcode permutation over a
+    -- name-mangled interpreter -- the runtime stays cheap. Runs on Lua and
+    -- Lua/Luau-Roblox.
     fortress = {
         { "line-ending-normalize", { } },
         { "trailing-whitespace", { } },
         { "minify", { } },
         { "control-flow-flatten", { } },
-        { "opaque-predicates", { max_insertions = 12 } },
-        { "anti-deobfuscation", { maxTripwires = 16 } },
-        { "garbage-code", { max_insertions = 10 } },
-        { "junk-functions", { max_functions = 6 } },
-        { "table-noise", { max_entries = 8 } },
-        { "boolean-noise", { max_replacements = 160 } },
+        { "opaque-predicates", { max_insertions = 16, max_bytes = 16384 } },
+        { "anti-deobfuscation", { maxTripwires = 24, maxBytes = 8192, density = 120 } },
+        { "garbage-code", { max_insertions = 16, max_bytes = 16384 } },
+        { "junk-functions", { max_functions = 8, max_bytes = 16384 } },
+        { "table-noise", { max_entries = 12, max_bytes = 8192 } },
+        { "boolean-noise", { max_replacements = 192, max_bytes = 16384 } },
         { "literal-padding", { } },
         { "numbers", { } },
         { "split-strings", { } },
@@ -126,11 +132,19 @@ local presets = {
         { "authenticated-strings", { } },
         { "string-byte-encoding", { } },
         { "strings", { } },
-        { "anti-tamper", { threshold = 3, detectExecutor = true, detectTiming = true } },
+        { "opaque-predicates", { max_insertions = 12, max_bytes = 12288 } },
+        { "garbage-code", { max_insertions = 12, max_bytes = 12288 } },
+        { "anti-deobfuscation", { maxTripwires = 16, maxBytes = 6144, density = 160 } },
+        { "boolean-noise", { max_replacements = 128, max_bytes = 12288 } },
+        { "junk-functions", { max_functions = 4, max_bytes = 8192 } },
+        { "split-strings", { } },
+        { "rename", { } },
+        { "anti-tamper", { threshold = 2, detectExecutor = true, detectTiming = true } },
         { "runtime-integrity", { } },
         { "field-index", { } },
-        { "junk-comments", { } },
+        { "junk-comments", { density = 0.22, max_bytes = 16384 } },
         { "rename", { } },
+        { "minify", { } },
         { "vm", { backend = "register" } }
     },
     -- "secure" is the recommended production preset: everything "hard" provides

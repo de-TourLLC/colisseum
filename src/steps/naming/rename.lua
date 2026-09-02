@@ -197,6 +197,13 @@ function Step.apply(source, options)
         elseif value == "local" then
             declaring = true
             is_local_decl = true
+            -- A self-reference guard is PER-STATEMENT: names declared by an earlier
+            -- `local` (e.g. `local length;` with no initializer) are ordinary
+            -- locals in the current statement's RHS and must be renamed like any
+            -- other reference. Leaving stale entries here makes the binder resolve
+            -- such references to the outer scope, keeping them unrenamed (a bare
+            -- global, and a dangling-global crash for the embedded VM decoder).
+            local_pending = {}
         elseif declaring and value == "function" then
             declaring = false
             local_function = true

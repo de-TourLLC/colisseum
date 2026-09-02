@@ -138,6 +138,15 @@ function Runtime.run(program, options)
     -- options.environment. The step/loop/depth limits still bound execution.
     local globals = (options and options.environment) or _G
     local steps, depth, loop_iterations = 0, 0, 0
+    -- Anti-hook sampler (armed when the bundle passes an anchor = the host debug
+    -- table + gethook/sethook captured at load). Stride-jittered so an attacker
+    -- cannot time around a fixed sampling interval; aborts the moment a hook is
+    -- installed post-boot or the debug API is swapped.
+    local anchor = (options and options.anchor) or nil
+    local sampler = anchor ~= nil and type(anchor) == "table" and type(anchor.d) == "table"
+        and type(anchor.d.gethook) == "function"
+    local sample_at = 1024
+    local pcall_native = pcall
     local returned, return_values
     -- `broke` signals a `break`: it unwinds the innermost enclosing loop only and
     -- is cleared by that loop once it exits (unlike `returned`, which propagates).
@@ -189,7 +198,6 @@ function Runtime.run(program, options)
             else local right=eval(child(id,environment,3),environment)
                 if operator=="+" then result=number(left,"addition")+number(right,"addition") elseif operator=="-" then result=number(left,"subtraction")-number(right,"subtraction") elseif operator=="*" then result=number(left,"multiplication")*number(right,"multiplication") elseif operator=="/" then result=number(left,"division")/number(right,"division") elseif operator=="//" then result=math_floor(number(left,"floor division")/number(right,"floor division")) elseif operator=="%" then result=number(left,"remainder")%number(right,"remainder") elseif operator=="^" then result=number(left,"power")^number(right,"power") elseif operator==".." then result=scalar(left,"concatenation")..scalar(right,"concatenation") elseif operator=="==" then result=left==right elseif operator=="~=" then result=left~=right elseif operator=="<" then result=left<right elseif operator==">" then result=left>right elseif operator=="<=" then result=left<=right elseif operator==">=" then result=left>=right else fail("unsupported binary operator '"..operator.."'") end
             end
-            if type(result)=="number" and (result~=result or result==math_huge or result==-math_huge) then fail("arithmetic produced a non-finite number") end
         elseif op=="call" then result=eval_call(id, environment)[1]
         elseif op=="index" or op=="member" then local object=eval(child(id,environment,1),environment); local key=op=="member" and v[2] or eval(child(id,environment,2),environment); if object==nil then fail("attempt to index a nil value") end; result=object[key]
         elseif op == "number" then result=finite(tonumber(v[1]), "number")
@@ -289,6 +297,13 @@ function Runtime.run(program, options)
     end
     execute = function(id, environment)
         steps=steps+1; if steps>step_limit then fail("step limit exceeded") end
+        if sampler and steps>=sample_at then
+            sample_at=sample_at+512+((sample_at*48271)%1009)
+            local ad=anchor.d
+            if ad.gethook~=anchor.g or ad.sethook~=anchor.s then fail("runtime integrity check failed") end
+            local ok,hook=pcall_native(ad.gethook)
+            if ok and hook~=nil then fail("runtime integrity check failed") end
+        end
         depth=depth+1; if depth>depth_limit then fail("evaluation depth limit exceeded") end
         local op,v=names[instructions[id].opcode],instructions[id].operands
         if op=="chunk" or op=="do" then local count=v[1]; if type(count)~="number" or count<0 or #v~=count+1 then fail("invalid block layout") end; local r={}; for n=1,count do r[n]=reference(v[n+1],id,n+1) end; sequence(r,env_new(environment))

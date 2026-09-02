@@ -113,6 +113,21 @@ function Step.apply(source, options)
     repeat dispatch = prng:identifier(prng:range(6, 10))
     until not body:find(dispatch, 1, true) and not hoisted[dispatch]
 
+    -- Assign every logical state a distinct shuffled KEY (a permutation of 1..N,
+    -- plus the dead-state keys above N), and make the dispatcher test on the KEY
+    -- rather than the logical index. Combined with non-linear encoded transitions
+    -- and self-looping dead states, this hides the state machine from a textual
+    -- scan: there is no literal `dispatch==1`..`dispatch==N` chain, no linear
+    -- next==index+1 edge pattern, and no enumerable set of reachable transitions.
+    -- keys[i] = the distinct shuffled key of logical state i (permutation of 1..N).
+    local keys = {}
+    for index = 1, #states do keys[index] = index end
+    for index = #keys, 2, -1 do
+        local swap = prng:range(1, index)
+        keys[index], keys[swap] = keys[swap], keys[index]
+    end
+    local start_key = keys[1]
+
     -- Shuffle the physical order of the branches; the state transitions still run
     -- the statements in their original logical order.
     local order = {}
@@ -122,31 +137,36 @@ function Step.apply(source, options)
         order[index], order[swap] = order[swap], order[index]
     end
 
+    -- Number of synthetic dead states (keys above #states) whose branches are
+    -- never reached and whose transitions self-loop, so a naive reachability
+    -- analysis cannot terminate on them.
+    local fake_count = prng:range(1, 2)
+
     local parts = {}
     if #hoist > 0 then parts[#parts + 1] = "local " .. table.concat(hoist, ",") .. "\n" end
-    parts[#parts + 1] = "local " .. dispatch .. "=1\n"
+    parts[#parts + 1] = "local " .. dispatch .. "=" .. encode_transition(prng, start_key) .. "\n"
     parts[#parts + 1] = "while " .. dispatch .. "~=0 do\n"
     for position, index in ipairs(order) do
         local state = states[index]
-        local branch = (position == 1 and "if " or "elseif ") .. dispatch .. "==" .. index .. " then "
+        local branch = (position == 1 and "if " or "elseif ") .. dispatch .. "==" .. keys[index] .. " then "
         if state.terminal then
             branch = branch .. (state.body or "return")
         else
-            local nxt = index < #states and index + 1 or 0
+            local nxt = index < #states and keys[index + 1] or 0
             branch = branch .. (state.body and (state.body .. " ") or "") .. dispatch .. "=" .. encode_transition(prng, nxt)
         end
         parts[#parts + 1] = branch .. "\n"
     end
     -- Dead states: unreachable sentinel branches (the dispatcher never sets these
-    -- values) carrying harmless local declarations and empty transitions. They add
-    -- noise edges to the recovery graph and confuse naive state enumeration without
-    -- ever executing or changing the program's behavior.
-    local fake_count = prng:range(1, 2)
+    -- keys) carrying harmless local declarations that loop back onto themselves.
+    -- They add noise edges to the recovery graph, confuse naive state enumeration,
+    -- and -- because the while-loop only exits at 0 -- make a naive reachability
+    -- analysis diverge, without ever executing or changing the program.
     for _ = 1, fake_count do
-        local sentinel = #states + _
-        local dead = "elseif " .. dispatch .. "==" .. sentinel .. " then local " ..
+        local key = #states + _
+        local dead = "elseif " .. dispatch .. "==" .. key .. " then local " ..
             prng:identifier(prng:range(6, 10)) .. "=" .. prng:range(0, 9999) .. " " ..
-            dispatch .. "=" .. encode_transition(prng, sentinel) .. "\n"
+            dispatch .. "=" .. encode_transition(prng, key) .. "\n"
         parts[#parts + 1] = dead
     end
     parts[#parts + 1] = "end\n" -- close the if/elseif chain

@@ -223,6 +223,7 @@ function Package.build(bytecode, fiu_source, options)
     options = options or {}
     local seed = Entropy.normalize(options.seed) or Entropy.collect()
     local prefix = marker_prefix(seed)
+    local environment_expr = require("src.steps.security.environment").expression()
     -- Obfuscate the embedded Fiu VM so it does not ship as readable source: strip
     -- its comments and formatting. Done before the bytecode and markers are spliced
     -- in. Token-based minification is Luau-safe; scope renaming is NOT applied here
@@ -239,14 +240,7 @@ end)()
 local __bytecode = %s
 local __settings = __fiu.luau_newsettings()
 __settings.errorHandling = true
--- Always hand the VM a real global environment: the running script's own
--- environment (getfenv(0), the Roblox/Luau globals with print, string, game, ...)
--- when available, otherwise _G. An empty table would leave every global nil.
-local __environment
-do
-    local __getfenv = rawget(_G, "getfenv")
-    __environment = (type(__getfenv) == "function" and __getfenv(0)) or _G
-end
+local __environment = %s
 local __run, __close = __fiu.luau_load(__bytecode, __environment, __settings)
 if not __run then error("luau-package: bytecode load failed", 0) end
 local __ok, __a, __b, __c, __d = pcall(__run)
@@ -254,7 +248,7 @@ if __close then __close() end
 if not __ok then error(__a, 0) end
 return __a, __b, __c, __d
 ]=]
-    return mangle(template, "__", prefix):format(fiu_source, seal(bytecode, seed, prefix))
+    return mangle(template, "__", prefix):format(fiu_source, environment_expr, seal(bytecode, seed, prefix))
 end
 
 -- Accept only a safe relative Fiu source path. Absolute paths, drive letters,

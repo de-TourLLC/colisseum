@@ -73,6 +73,28 @@ function RegBytecode.rk_index(x) return -x end
 -- round-trip through %.17g. No load/loadstring is involved.
 
 local char, byte, format, concat = string.char, string.byte, string.format, table.concat
+
+-- Portable byte-wise XOR (bit32 on 5.3/Luau, `bit` on LuaJIT/luabitop, arithmetic
+-- fallback on plain 5.1) so the foged-in-memory blob survives every host.
+local bxor
+do
+    local b32 = bit32 or rawget(_G, "bit") or rawget(_G, "bit32")
+    if b32 and type(b32.bxor) == "function" then
+        bxor = b32.bxor
+    else
+        bxor = function(a, b)
+            local r, p = 0, 1
+            while (a > 0) or (b > 0) do
+                local ba, bb = a % 2, b % 2
+                if ba ~= bb then r = r + p end
+                if a > 0 then a = (a - ba) / 2 end
+                if b > 0 then b = (b - bb) / 2 end
+                p = p * 2
+            end
+            return r
+        end
+    end
+end
 local floor = math.floor
 
 RegBytecode.MAGIC = "CLRV"
@@ -139,6 +161,94 @@ function RegBytecode.decode(data)
         return p
     end
     return r_proto()
+end
+
+-- ---- opaque in-memory encoding -------------------------------------------------
+-- The register backend never materializes the decoded program as plain Lua
+-- tables. `encode_opaque` flattens every proto's constant pool and instruction
+-- stream into ONE binary string (build-fogged byte-wise) plus a numeric region
+-- index. The interpreter decodes each instruction/constant from that string on
+-- demand, so a debug.getupvalue / getinfo dump of an active VM frame yields an
+-- undecoded, fogged blob -- not a ready-to-read {code, constants, protos} tree.
+--
+-- Returns (fogged_byte_string, regions) where regions[0] is the main proto.
+-- Each region is { n = numparams, v = is_vararg(1/0), k = #constants,
+-- c = #instructions, d = instruction-stream offset, o = constant offsets,
+-- p = child region ids, u = upvalue descriptors ({local?, index}) }.
+local function bi32(out, n)
+    n = (n + 2147483648) % 4294967296
+    out[#out + 1] = char(n % 256)
+    out[#out + 1] = char(floor(n / 256) % 256)
+    out[#out + 1] = char(floor(n / 65536) % 256)
+    out[#out + 1] = char(floor(n / 16777216) % 256)
+end
+
+function RegBytecode.encode_opaque(mainproto, fog)
+    fog = fog or { 0 }
+    -- Assign region ids in pre-order: main = 0, children in encounter order.
+    local region_of, id_to_proto, next_id = {}, {}, 0
+    local function visit(p)
+        if region_of[p] == nil then
+            region_of[p] = next_id
+            id_to_proto[next_id] = p
+            next_id = next_id + 1
+            for _, child in ipairs(p.protos) do visit(child) end
+        end
+    end
+    visit(mainproto)
+
+    -- Flatten each proto region in id order (constants then 13-byte
+    -- instructions) into one byte stream, remembering per-constant offsets.
+    local buf, pos = {}, 0
+    local out = {}
+    for id = 0, next_id - 1 do
+        local p = id_to_proto[id]
+        local reg = { n = p.numparams, v = p.is_vararg and 1 or 0, k = #p.constants, c = #p.code }
+        local koffs = {}
+        for ci, k in ipairs(p.constants) do
+            koffs[ci] = pos + 1
+            local t = type(k)
+            buf[#buf + 1] = char(t == "number" and 0 or t == "string" and 1 or t == "boolean" and 2 or 3)
+            pos = pos + 1
+            if t == "number" then
+                local s = format("%.17g", k)
+                buf[#buf + 1] = str(s)
+                pos = pos + 4 + #s
+            elseif t == "string" then
+                buf[#buf + 1] = str(k)
+                pos = pos + 4 + #k
+            elseif t == "boolean" then
+                buf[#buf + 1] = char(k and 1 or 0)
+                pos = pos + 1
+            end
+        end
+        reg.o = koffs
+        reg.d = pos + 1
+        for _, inst in ipairs(p.code) do
+            buf[#buf + 1] = char(inst[1])
+            pos = pos + 1
+            bi32(buf, inst[2]); bi32(buf, inst[3]); bi32(buf, inst[4])
+            pos = pos + 12
+        end
+        local kids = {}
+        for ci, child in ipairs(p.protos) do kids[ci] = region_of[child] end
+        reg.p = kids
+        local ups = {}
+        for ui, d in ipairs(p.upvals) do ups[ui] = { d.kind == "local" and 0 or 1, d.index } end
+        reg.u = ups
+        out[id] = reg
+    end
+
+    local raw = concat(buf)
+    -- Build-fog the whole byte stream so the decrypted in-memory blob is not a
+    -- byte-for-byte image of the serialized format (the interpreter un-fogs each
+    -- byte on demand).
+    local out_b, nf = {}, #fog
+    for i = 1, #raw do
+        out_b[i] = char(bxor(byte(raw, i), fog[(i - 1) % nf + 1]))
+    end
+    raw = concat(out_b)
+    return raw, out
 end
 
 return RegBytecode

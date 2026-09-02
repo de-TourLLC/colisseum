@@ -3,7 +3,7 @@ local Step = { name = "register-vm", version = 1 }
 Step.metadata = {
     id = Step.name,
     kind = "backend",
-    description = "Compiles source to ChaCha-encrypted register bytecode run by the embedded register VM (faster than the tree-walker; Lua + Luau, no loadstring)."
+    description = "Compiles source to an opaque, build-foged register bytecode blob run by the embedded register VM (faster than the tree-walker; Lua + Luau, no loadstring, no plaintext bytecode in memory)."
 }
 
 local function read(path)
@@ -18,9 +18,9 @@ local this = debug.getinfo(1, "S").source:sub(2)
 local core_dir = (this:match("^(.*[/\\])") or "./") .. "../../core/"
 
 -- Turn Lua source into a self-contained chunk that embeds the register VM
--- (bytecode decoder + interpreter), carries the program as ChaCha20-encrypted
--- register bytecode, decrypts it with pure bitwise ops (never loadstring), and
--- runs it. Faster analogue of the native tree-walking backend. Runs on both
+-- (fog-untangler + interpreter), carries the program as an opaque build-foged
+-- byte stream plus a numeric region map (no plaintext bytecode ever materializes),
+-- and runs it. Faster analogue of the native tree-walking backend. Runs on both
 -- Lua/LuaJIT and Luau/Roblox (portable bit32/bit and getfenv(0)/_G resolution).
 function Step.apply(source, options)
     if type(source) ~= "string" then error("register-vm: source must be a string") end
@@ -41,8 +41,9 @@ function Step.apply(source, options)
     for _ = 1, 6 do prefix = prefix .. string.char(97 + prng:range(0, 25)) end
 
     -- Per-build opcode permutation: shuffle the VM's opcode numbers, remap the
-    -- compiled program to match, and reorder the embedded opcode table, so no two
-    -- builds share an encoding and a generic decoder cannot assume "opcode 1 = MOVE".
+    -- compiled program to match, and inline the permuted numbers into the runtime
+    -- dispatch -- so no two builds share an encoding and neither the packed byte
+    -- stream nor the interpreter carries readable opcode names.
     local report = type(options.progress) == "function" and options.progress or function() end
     report(0.0, "vm:compiling")
     local mainproto = RegCompiler.compile(source)
@@ -56,33 +57,47 @@ function Step.apply(source, options)
     end
     remap(mainproto)
 
+    -- Opaque in-memory encoding: the program ships as a build-foged byte stream
+    -- (one concatenated blob of every proto's constants + instructions) plus a
+    -- numeric region map. The interpreter un-fogs each byte on demand, so no
+    -- decoded {code, constants, protos} tree exists to dump (V-H1/A-1).
     report(0.4, "vm:encoding")
-    local bytecode = RegBytecode.encode(mainproto)
+    local nfog = prng:range(6, 10)
+    local fog = {}
+    for i = 1, nfog do fog[i] = prng:range(0, 255) end
+    local blob, regs = RegBytecode.encode_opaque(mainproto, fog)
+    local fog_literal = "{" .. table.concat(fog, ",") .. "}"
+    local blob_literal = '"' .. blob:gsub(".", function(c) return string.format("\\%03d", c:byte()) end) .. '"'
+    local regs_parts, max_id = {}, 0
+    for id in pairs(regs) do if id > max_id then max_id = id end end
+    for id = 0, max_id do
+        local m = regs[id]
+        local ups = {}
+        for i = 1, #m.u do ups[i] = "{" .. m.u[i][1] .. "," .. m.u[i][2] .. "}" end
+        regs_parts[#regs_parts + 1] = "[" .. id .. "]={n=" .. m.n .. ",v=" .. m.v ..
+            ",k=" .. m.k .. ",c=" .. m.c .. ",d=" .. m.d ..
+            ",o={" .. table.concat(m.o, ",") .. "},p={" .. table.concat(m.p, ",") .. "}" ..
+            ",u={" .. table.concat(ups, ",") .. "}}"
+    end
+    local regs_literal = "{" .. table.concat(regs_parts, ",") .. "}"
 
-    -- ChaCha20 decryptor expression -> plaintext register bytecode string.
-    report(0.5, "vm:encrypting")
-    local sealed = Package.seal(bytecode, seed, prefix .. "s")
-
-    -- Embed the VM with its opcode table permuted to match. reg-bytecode holds the
-    -- `names` list the interpreter caches opcode ids from; reorder it so OP.<X>
-    -- yields the per-build number and the dispatch (op == <X>) stays consistent.
+    -- Embed the interpreter with its dispatch inlined to the permuted numbers:
+    -- the OP table and its readable field names (MOVE, LOADK, ...) never ship --
+    -- every `OP.<NAME>` token becomes a plain number, and the RegBytecode
+    -- dependency line is dropped (the runtime is self-contained at that point).
     report(0.68, "vm:mangling")
-    local permuted_names = {}
-    for code = 1, opcount do permuted_names[perm[code]] = RegBytecode.NAME[code] end
-    local names_literal = "{\"" .. table.concat(permuted_names, "\",\"") .. "\"}"
-    local bc_raw = read(core_dir .. "reg-bytecode.lua"):gsub("local names = %b{}", "local names = " .. names_literal, 1)
-    -- Inline the permuted opcode numbers into the runtime dispatch, so no readable
-    -- OP.<NAME> field names (MOVE, LOADK, ...) survive -- the loop compares plain
-    -- numbers. This is what keeps runtime fast even after obfuscation.
     local opcode_of = RegBytecode.opcodes()
-    local rt_raw = read(core_dir .. "reg-runtime.lua"):gsub("OP%.([A-Z_]+)", function(nm)
-        local c = opcode_of[nm]; return c and tostring(perm[c]) or nil
-    end)
+    local rt_raw = read(core_dir .. "reg-runtime.lua")
+        :gsub("local RegBytecode = require%b()", "", 1)
+        :gsub("local OP = RegBytecode%.OP", "local OP = {}", 1)
+        :gsub("OP%.([A-Z_]+)", function(nm)
+            local c = opcode_of[nm]; return c and tostring(perm[c]) or nil
+        end)
     -- Obfuscate the interpreter SOURCE itself (fast: small source, payload not yet
-    -- attached). rename mangles identifiers everywhere; string encryption runs ONLY
-    -- on the bytecode module (opcode name strings), whose strings are touched once
-    -- at load -- never inside the hot register-dispatch loop -- so runtime speed is
-    -- unchanged. Each pass is guarded: a failure just keeps the previous source.
+    -- attached). rename mangles identifiers everywhere. String encryption is NOT
+    -- applied to the interpreter: its strings sit outside the hot dispatch loop,
+    -- and the opcode names are already gone. Each pass is guarded: a failure just
+    -- keeps the previous source.
     local Rename = require("src.steps.naming.rename")
     local StepPaths = require("src.core.step-paths")
     local SplitStrings = require(StepPaths.module("split-strings"))
@@ -97,7 +112,6 @@ function Step.apply(source, options)
         end
         return src
     end
-    local bytecode_src = Minify.apply(harden(bc_raw, "regbc", true))
     local runtime_src = Minify.apply(harden(rt_raw, "regrt", false))
 
     -- Post-VM noise round. Wraps the finished bundle (which is already the sealed,
@@ -157,25 +171,26 @@ function Step.apply(source, options)
     end
 
     report(0.92, "vm:finishing")
-    local B, R, C, P, V, E = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "V", prefix .. "E"
-    local environment = "(function() local g=rawget(_G,\"getfenv\") return (type(g)==\"function\" and g(0)) or _G end)()"
+    local Environment = require("src.steps.security.environment")
+    local R, S, F, G, E, A, V = prefix .. "R", prefix .. "S", prefix .. "F", prefix .. "G", prefix .. "E", prefix .. "A", prefix .. "V"
     local bundle = table.concat({
         noise_prologue(),
-        "local " .. B .. "=(function()", bytecode_src, "end)()",
-        "local " .. R .. "=(function() local require=function() return " .. B .. " end", runtime_src, "end)()",
-        "local " .. C .. "=" .. sealed,
-        "local " .. P .. "=" .. B .. ".decode(" .. C .. ")",
-        "local " .. E .. "=" .. environment,
+        "local " .. R .. "=(function()", runtime_src, "end)()",
+        "local " .. S .. "=" .. blob_literal,
+        "local " .. F .. "=" .. fog_literal,
+        "local " .. G .. "=" .. regs_literal,
+        "local " .. E .. "=" .. Environment.expression(),
+        "local " .. A .. "=" .. Environment.anchor(),
         -- yield_interval: on Roblox, breathe (task.wait) every ~1M VM instructions
         -- when it is safe to yield, so heavy synchronous loops do not hit the
         -- execution-time limit. No-op where no scheduler exists.
-        "local " .. V .. "=" .. R .. ".run(" .. P .. ",{environment=" .. E .. ",yield_interval=1000000})",
+        "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})",
         "return " .. V .. "[1]," .. V .. "[2]," .. V .. "[3]," .. V .. "[4]",
     }, "\n")
-    -- Collapse to a single line. The only newlines are statement separators (the
-    -- ChaCha loader template); the minified VM sources and the encrypted payload
-    -- carry no literal newlines, so replacing newlines with spaces is safe and
-    -- avoids re-lexing the whole (large) bundle.
+    -- Collapse to a single line. The only newlines are statement separators; the
+    -- minified VM source and the packed payload literals carry no literal
+    -- newlines, so replacing newlines with spaces is safe and avoids re-lexing
+    -- the whole (large) bundle.
     return (bundle:gsub("[\r\n]+", " "))
 end
 

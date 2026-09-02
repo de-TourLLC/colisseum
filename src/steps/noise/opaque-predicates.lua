@@ -23,25 +23,29 @@ end
 -- is dead and semantics are preserved -- but a deobfuscator must reason about an
 -- arithmetic, float, or type invariant to prove it, instead of stripping `if false`.
 -- Mixing several families means no single constant-folding rule kills them all.
+-- Families reference a RUNTIME value (os.time()/os.clock()), so the predicate is
+-- not constant-foldable from the bundle: proving it false requires modeling the
+-- standard library, not just evaluating integer literals.
 local function opaque_false(prng)
-    local kind = prng:range(1, 5)
+    local kind = prng:range(1, 6)
     if kind == 1 then
-        -- A string's length is never negative.
-        return "#tostring(" .. prng:range(100, 999999) .. ") < 0"
+        -- os.time() is a positive integer; its decimal string is never empty.
+        return '#tostring(os.time()) < 0'
     elseif kind == 2 then
-        -- A perfect square mod 4 is only ever 0 or 1.
-        local n = prng:range(3, 99999)
-        return "(" .. n .. "*" .. n .. ")%" .. "4 == " .. (prng:range(0, 1) == 0 and 2 or 3)
+        -- os.time() % 2 is 0 or 1, never 3.
+        return 'os.time()%2 == 3'
     elseif kind == 3 then
-        -- The product of two consecutive integers is always even.
-        local n = prng:range(3, 99999)
-        return "(" .. n .. "*(" .. n .. "+1))%" .. "2 == 1"
+        -- os.clock() is a number, never a string.
+        return 'type(os.clock()) == "string"'
     elseif kind == 4 then
-        -- IEEE NaN is never equal to itself: (0/0) == (0/0) is always false.
-        return "(0/0)==(0/0)"
+        -- os.time() is a number, never a boolean.
+        return 'type(os.time()) == "boolean"'
+    elseif kind == 5 then
+        -- os.clock() >= 0 always.
+        return 'os.clock() < 0'
     end
     -- `type` of a number literal is always "number", never "userdata".
-    return "type(" .. prng:range(-9999, 9999) .. ") == \"userdata\""
+    return 'type(' .. prng:range(-9999, 9999) .. ') == "userdata"'
 end
 
 local function value_expr(prng)
@@ -100,7 +104,11 @@ function Step.apply(source, options)
     local body = source:sub(#shebang + 1)
     local blocks, bytes = {}, 0
     for _ = 1, max_insertions do
-        local text = "if " .. opaque_false(prng) .. " then local " ..
+        -- Leading newline so the block can never fuse with the previous token
+        -- (e.g. `end`+`if` -> `endif`, or `return s`+`if` -> `return sif`): the
+        -- dead block is spliced at a proven statement boundary, but the boundary
+        -- check alone cannot guarantee a whitespace-free minified neighbor.
+        local text = "\nif " .. opaque_false(prng) .. " then local " ..
             prng:identifier(prng:range(6, 12)) .. " = " .. value_expr(prng) .. " end\n"
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text

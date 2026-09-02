@@ -126,19 +126,18 @@ function Step.apply(source, options)
     local bytecode_src = Minify.apply(harden(bytecode_raw, "natbc", true))
     local runtime_src = Minify.apply(harden(kat_table .. katify(read(core_dir .. "runtime.lua")), "natrt", false))
 
-    local B, R, C, P, V, E = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "V", prefix .. "E"
-    -- Resolve globals from the running script's own environment first
-    -- (getfenv(0): the Roblox/Luau globals with print, game, task, ...), falling
-    -- back to _G. This makes the one native-VM output run on both plain Lua/LuaJIT
-    -- and Luau/Roblox, where host globals do not live in _G.
-    local environment = "(function() local g=rawget(_G,\"getfenv\") return (type(g)==\"function\" and g(0)) or _G end)()"
+    local Environment = require("src.steps.security.environment")
+    local B, R, C, P, E, A, V = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "E", prefix .. "A", prefix .. "V"
+    -- Sandboxed payload environment (no debug/load*/getfenv/setfenv escape) and a
+    -- host-captured debug anchor for the interpreter's anti-hook sampler.
     return table.concat({
         "local " .. B .. "=(function()", bytecode_src, "end)()",
         "local " .. R .. "=(function() local require=function() return " .. B .. " end", runtime_src, "end)()",
         "local " .. C .. "=" .. sealed,
         "local " .. P .. "=" .. B .. ".decode(" .. C .. ")",
-        "local " .. E .. "=" .. environment,
-        "local " .. V .. "=" .. R .. ".run(" .. P .. ",{environment=" .. E .. "})",
+        "local " .. E .. "=" .. Environment.expression(),
+        "local " .. A .. "=" .. Environment.anchor(),
+        "local " .. V .. "=" .. R .. ".run(" .. P .. ",{environment=" .. E .. ",anchor=" .. A .. "})",
         "return " .. V .. "[1]," .. V .. "[2]," .. V .. "[3]," .. V .. "[4]",
     }, "\n")
 end

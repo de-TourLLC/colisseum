@@ -128,6 +128,19 @@ return add(2)]]
     fails(function() Obfuscator.execute("while true do end", { steps = 20 }) end, "step limit exceeded")
 end)
 
+test("rename clears the stale self-reference guard between declarations", function()
+    -- `local length;` (no initializer) must not leave `length` in the
+    -- per-statement self-reference guard, or a LATER statement's RHS resolves it
+    -- to the outer scope and leaves a dangling global (the embedded VM decoder
+    -- used to crash with "arithmetic on global 'length'").
+    local Rename = require("src.steps.naming.rename")
+    local decoded = "local function read(n, data, pos) local length; length, pos = read_u(data, pos, 2); if length == 0 or pos + length - 1 > n then return nil end; local text = data:sub(pos, pos + length - 1); return text, pos + length end"
+    local renamed = Rename.apply(decoded, { seed = "regression" })
+    check(not renamed:find("length", 1, true), "rename left a stale `length` reference")
+    local chunk = loadstring(renamed, "renamed")
+    check(chunk ~= nil, "renamed snippet did not load")
+end)
+
 test("native VMs erase Luau type metadata before compiling", function()
     local source = [[
 export type Counter = { value: number }
@@ -144,9 +157,14 @@ return item.value
     check(chunk ~= nil, "erased Luau did not load as Lua: " .. tostring(load_error))
     local values = Obfuscator.execute(source)
     equal(values[1], 42, "native compiler changed typed Luau semantics")
-    local fortress = Obfuscator.obfuscate(source, { preset = "fortress", target = "luau", seed = 42 })
-    check(type(fortress) == "string" and #fortress > 0, "Fortress produced no native VM output")
+local fortress = Obfuscator.obfuscate(source, { preset = "fortress", target = "luau", seed = 42 })
+    check(type(fortress) == "string" and #fortress > 0, "Fortress produced no register-VM output")
     check(not fortress:find("export type", 1, true), "Fortress retained a type alias")
+    check(fortress:find("loadstring", 1, true) == nil, "Fortress must not use loadstring")
+    local fchunk, ferror = loadstring(fortress, "fortress-vm")
+    check(fchunk ~= nil, "Fortress output did not load: " .. tostring(ferror))
+    local fok, fresult = pcall(fchunk)
+    check(fok and fresult == 42, "Fortress changed register-VM semantics: " .. tostring(fresult))
 end)
 
 test("text presets produce valid executable LuaJIT output", function()
