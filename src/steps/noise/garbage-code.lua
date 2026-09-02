@@ -1,8 +1,9 @@
 local Lexer = require("src.core.lexer")
 local Validate = require("src.core.validate")
 local Entropy = require("src.core.entropy")
+local Safe = require("src.steps.shared.token-safe")
 
-local Step = { name = "garbage-code", version = 2 }
+local Step = { name = "garbage-code", version = 3 }
 Step.metadata = {
     id = Step.name,
     version = Step.version,
@@ -26,23 +27,50 @@ local function check_source(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
 
--- Statically unreachable wrappers. Varying the guard keeps the injected noise
--- from carrying a single recognisable signature across builds.
+-- Unreachable wrappers. Varying the guard keeps the injected noise from carrying
+-- a single recognisable signature across builds. The literal-false forms are
+-- joined by several runtime-always-false guards (`n*0 ~= 0`, `x ~= x`, an ordered
+-- pair contradiction) so the block is not always a grep-able `if false then`.
+-- Every wrapped body is a harmless local assignment, so even a guard that somehow
+-- evaluated true could not change observable behaviour.
 local guards = {
-    function(body) return "if false then " .. body .. " end\n" end,
-    function(body) return "while false do " .. body .. " end\n" end,
-    function(body, prng) return "for " .. prng:identifier(prng:range(4, 6)) .. "=1,0 do " .. body .. " end\n" end,
+    function(body) return "if false then " .. body .. " end" end,
+    function(body) return "while false do " .. body .. " end" end,
+    function(body, prng) return "for " .. prng:identifier(prng:range(4, 6)) .. "=1,0 do " .. body .. " end" end,
+    function(body, prng)
+        local n = prng:identifier(prng:range(4, 6))
+        return "do local " .. n .. "=" .. tostring(prng:range(2, 9999)) ..
+            " if (" .. n .. "*0)~=0 then " .. body .. " end end"
+    end,
+    function(body, prng)
+        local n = prng:identifier(prng:range(4, 6))
+        return "do local " .. n .. "=" .. tostring(prng:range(2, 9999)) ..
+            " if " .. n .. "~=" .. n .. " then " .. body .. " end end"
+    end,
+    function(body, prng)
+        local lo = prng:range(1, 4000)
+        local hi = lo + prng:range(1, 4000)
+        local p, q = prng:identifier(prng:range(4, 6)), prng:identifier(prng:range(4, 6))
+        return "do local " .. p .. "," .. q .. "=" .. tostring(lo) .. "," .. tostring(hi) ..
+            " if " .. p .. ">" .. q .. " then " .. body .. " end end"
+    end,
 }
 
 -- Side-effect-free, semantically inert right-hand sides.
 local function value_expr(prng)
-    local kind = prng:range(1, 4)
+    local kind = prng:range(1, 6)
     if kind == 1 then
         return tostring(prng:range(0, 999999))
     elseif kind == 2 then
         return tostring(prng:range(0, 9999)) .. "+" .. tostring(prng:range(0, 9999))
     elseif kind == 3 then
         return prng:range(0, 1) == 0 and "true" or "false"
+    elseif kind == 4 then
+        return "(" .. tostring(prng:range(1, 9999)) .. "*" .. tostring(prng:range(2, 97)) ..
+            ")%" .. tostring(prng:range(257, 65521))
+    elseif kind == 5 then
+        return "{" .. tostring(prng:range(0, 999)) .. "," .. tostring(prng:range(0, 999)) ..
+            ",[" .. tostring(prng:range(1, 99)) .. "]=" .. tostring(prng:range(0, 999)) .. "}"
     end
     return "{" .. tostring(prng:range(0, 999)) .. "," .. tostring(prng:range(0, 999)) .. "}"
 end
@@ -63,14 +91,23 @@ function Step.apply(source, options)
     local blocks, bytes = {}, 0
     for index = 1, max_insertions do
         local statement = "local " .. prng:identifier(prng:range(6, 12)) .. " = " .. value_expr(prng)
-        local text = prng:pick(guards)(statement, prng)
+        -- Frame each block with its own leading/trailing newline so it can never
+        -- fuse with a neighbouring token when spliced at a statement boundary.
+        local text = "\n" .. prng:pick(guards)(statement, prng) .. "\n"
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    local result = shebang .. table.concat(blocks) .. body
+    -- Scatter the dead blocks across random top-level statement boundaries instead
+    -- of stacking them into one contiguous prefix a deobfuscator could strip in a
+    -- single cut. Fall back to a prefix splice if interleaving somehow invalidates.
+    local result = shebang .. Safe.interleave(body, prng, blocks)
     local valid, message, position = Validate.syntax(result)
-    if not valid then error(Step.name .. ": generated source is invalid at " .. position .. ": " .. message) end
+    if not valid then
+        result = shebang .. table.concat(blocks) .. body
+        valid, message, position = Validate.syntax(result)
+        if not valid then error(Step.name .. ": generated source is invalid at " .. position .. ": " .. message) end
+    end
     Step.last_metadata = { insertion_count = #blocks, generated_bytes = bytes, dead_only = true, validated = true }
     return result
 end

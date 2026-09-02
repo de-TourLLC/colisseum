@@ -1,4 +1,4 @@
-local Step = { name = "register-vm", version = 1 }
+local Step = { name = "register-vm", version = 2 }
 
 Step.metadata = {
     id = Step.name,
@@ -129,45 +129,111 @@ function Step.apply(source, options)
     local function decoy_ident()
         return prefix .. noise_prng:identifier(noise_prng:range(4, 8))
     end
-    local function noise_prologue()
-        local out = {}
-        -- 2-4 meaningless decoy functions that are never called.
-        local nfun = noise_prng:range(2, 4)
-        for i = 1, nfun do
-            local name = decoy_ident()
-            local arg = decoy_ident()
-            local acc = decoy_ident()
-            out[#out + 1] = "local function " .. name .. "(" .. arg .. ") local " .. acc ..
+    -- A fresh modulus for every decoy, drawn from a wide range each time. The old
+    -- prologue hard-coded `%9973`, which was a single grep-able signature present
+    -- in every build; a per-decoy random modulus removes that fixed marker.
+    local function decoy_mod()
+        return tostring(noise_prng:range(257, 65521))
+    end
+    -- Decoy FUNCTION skeletons. Each is never called, so any of these shapes is
+    -- interchangeable; picking one at random per decoy means no single function
+    -- body pattern recurs across builds. All stay inside the portable subset
+    -- (locals, local function, for, if/return, and/or/==/~=, + - * %, numeric
+    -- literals) so the output runs on Lua 5.1/LuaJIT and Luau alike.
+    local fn_shapes = {
+        function() -- accumulating for-loop (random modulus)
+            local name, arg, acc = decoy_ident(), decoy_ident(), decoy_ident()
+            return "local function " .. name .. "(" .. arg .. ") local " .. acc ..
                 "=0 for " .. decoy_ident() .. "=1," .. tostring(noise_prng:range(2, 9)) ..
                 " do " .. acc .. "=(" .. acc .. "+(" .. arg .. "*" .. tostring(noise_prng:range(2, 7)) ..
-                "))%9973 end return " .. acc .. " end"
-        end
-        -- 2-4 opaque always-false predicates guarding dead blocks. The predicates
-        -- are (a==b) and (lit ~= lit+k): the first is true, the second false, so
-        -- the guarded `return` is unreachable and execution always flows on.
-        local npred = noise_prng:range(2, 4)
-        for i = 1, npred do
+                "))%" .. decoy_mod() .. " end return " .. acc .. " end"
+        end,
+        function() -- straight-line arithmetic over two params
+            local name, x, y, r = decoy_ident(), decoy_ident(), decoy_ident(), decoy_ident()
+            return "local function " .. name .. "(" .. x .. "," .. y .. ") local " .. r .. "=(" ..
+                x .. "*" .. tostring(noise_prng:range(2, 13)) .. "+" .. y .. "-" .. tostring(noise_prng:range(1, 97)) ..
+                ")%" .. decoy_mod() .. " return " .. r .. " end"
+        end,
+        function() -- branch that returns one of two folded constants
+            local name, arg, m = decoy_ident(), decoy_ident(), decoy_ident()
+            return "local function " .. name .. "(" .. arg .. ") local " .. m .. "=" .. arg ..
+                "%" .. tostring(noise_prng:range(2, 8)) .. " if " .. m .. "==0 then return " ..
+                tostring(noise_prng:range(0, 9999)) .. " end return " .. tostring(noise_prng:range(0, 9999)) .. " end"
+        end,
+        function() -- chained locals, returns the last
+            local name, arg = decoy_ident(), decoy_ident()
+            local a, b = decoy_ident(), decoy_ident()
+            return "local function " .. name .. "(" .. arg .. ") local " .. a .. "=" .. arg .. "+" ..
+                tostring(noise_prng:range(1, 999)) .. " local " .. b .. "=(" .. a .. "*" ..
+                tostring(noise_prng:range(2, 9)) .. ")%" .. decoy_mod() .. " return " .. b .. " end"
+        end,
+    }
+    -- Always-FALSE predicate skeletons guarding a dead block. Each construction is
+    -- provably false at runtime (so the guarded body never runs and control always
+    -- flows on) but reaches that falsity a different way, so the guard is not one
+    -- recurring `a==b and lit==lit+k` shape.
+    local pred_shapes = {
+        function() -- (a==b) and (base ~= base): identity contradiction
             local a, b = decoy_ident(), decoy_ident()
             local lit = tostring(noise_prng:range(2, 9000))
-            local keep = tostring(noise_prng:range(1, 3))
             local base = noise_prng:range(2, 9000)
-            out[#out + 1] = "local " .. a .. "," .. b .. "=" .. lit .. "," .. lit ..
+            return "local " .. a .. "," .. b .. "=" .. lit .. "," .. lit ..
                 " if " .. a .. "==" .. b .. " and " .. tostring(base) .. "==" .. tostring(base + noise_prng:range(1, 3)) ..
-                " then return " .. decoy_ident() .. "," ..
-                decoy_ident() .. " end " .. decoy_ident() .. "=" .. keep
-        end
-        -- 1-2 "fake stages" that fold plain constants but discard every result.
-        local nstage = noise_prng:range(1, 2)
-        for i = 1, nstage do
-            local sink = decoy_ident()
-            local stage = decoy_ident()
-            out[#out + 1] = "local " .. sink .. "=" .. tostring(noise_prng:range(0, 50)) ..
+                " then return " .. decoy_ident() .. "," .. decoy_ident() .. " end " ..
+                decoy_ident() .. "=" .. tostring(noise_prng:range(1, 3))
+        end,
+        function() -- x ~= x is false for any non-NaN number
+            local x = decoy_ident()
+            return "local " .. x .. "=" .. tostring(noise_prng:range(2, 9000)) ..
+                " if " .. x .. "~=" .. x .. " then return " .. decoy_ident() .. " end " ..
+                decoy_ident() .. "=" .. tostring(noise_prng:range(1, 3))
+        end,
+        function() -- lo > hi with lo < hi chosen: strict-order contradiction
+            local lo = noise_prng:range(1, 4000)
+            local hi = lo + noise_prng:range(1, 4000)
+            local p, q = decoy_ident(), decoy_ident()
+            return "local " .. p .. "," .. q .. "=" .. tostring(lo) .. "," .. tostring(hi) ..
+                " if " .. p .. ">" .. q .. " then return " .. decoy_ident() .. " end " ..
+                decoy_ident() .. "=" .. tostring(noise_prng:range(1, 3))
+        end,
+        function() -- (n*0) ~= 0 is always false
+            local n = decoy_ident()
+            return "local " .. n .. "=" .. tostring(noise_prng:range(2, 9000)) ..
+                " if (" .. n .. "*0)~=0 then return " .. decoy_ident() .. " end " ..
+                decoy_ident() .. "=" .. tostring(noise_prng:range(1, 3))
+        end,
+    }
+    -- "Fake stage" skeletons: compute and discard throwaway values.
+    local stage_shapes = {
+        function()
+            local sink, stage = decoy_ident(), decoy_ident()
+            return "local " .. sink .. "=" .. tostring(noise_prng:range(0, 50)) ..
                 " local " .. stage .. "=" .. tostring(noise_prng:range(2, 7)) ..
                 " for " .. decoy_ident() .. "=1," .. tostring(noise_prng:range(3, 12)) ..
-                " do " .. sink .. "=(" .. sink .. "*" .. stage .. ")%" .. tostring(noise_prng:range(101, 997)) ..
+                " do " .. sink .. "=(" .. sink .. "*" .. stage .. ")%" .. decoy_mod() ..
                 " end " .. sink .. "=" .. sink .. "*0"
+        end,
+        function()
+            local sink = decoy_ident()
+            return "local " .. sink .. "=" .. tostring(noise_prng:range(1, 9999)) ..
+                " " .. sink .. "=(" .. sink .. "+" .. tostring(noise_prng:range(1, 9999)) ..
+                ")%" .. decoy_mod() .. " " .. sink .. "=" .. sink .. "-" .. sink
+        end,
+    }
+    local function noise_prologue()
+        -- Build a mixed pool of decoys, then shuffle so the emission order is not a
+        -- fixed functions->predicates->stages sequence. Both the *shapes* (above)
+        -- and their *order* now vary per build, so a scanner cannot key on either
+        -- a recurring body pattern or a recurring block layout.
+        local pool = {}
+        for _ = 1, noise_prng:range(2, 4) do pool[#pool + 1] = noise_prng:pick(fn_shapes)() end
+        for _ = 1, noise_prng:range(2, 4) do pool[#pool + 1] = noise_prng:pick(pred_shapes)() end
+        for _ = 1, noise_prng:range(1, 2) do pool[#pool + 1] = noise_prng:pick(stage_shapes)() end
+        for ii = #pool, 2, -1 do
+            local jj = noise_prng:range(1, ii)
+            pool[ii], pool[jj] = pool[jj], pool[ii]
         end
-        return table.concat(out, " ")
+        return table.concat(pool, " ")
     end
 
     report(0.92, "vm:finishing")

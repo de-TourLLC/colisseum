@@ -1,8 +1,9 @@
 local Lexer = require("src.core.lexer")
 local Validate = require("src.core.validate")
 local Entropy = require("src.core.entropy")
+local Safe = require("src.steps.shared.token-safe")
 
-local Step = { name = "junk-functions", version = 1 }
+local Step = { name = "junk-functions", version = 2 }
 Step.metadata = {
     id = Step.name,
     version = Step.version,
@@ -50,20 +51,43 @@ local function value_expr(prng, priors)
     return tostring(prng:range(0, 999))
 end
 
--- Build one dead `local function`. It declares between one and four locals from
--- pure values and returns one of them. Defining it has no side effect, and the
+-- Build one dead decoy function. It declares between one and four locals from
+-- pure values and returns some of them. Defining it has no side effect, and the
 -- step never emits a call to it, so the body is unreachable at runtime.
+--
+-- Both the *shape* varies per decoy (a `local function f(...)` statement or a
+-- `local f = function(...)` binding), and the signature takes zero to two params
+-- that the body can fold in, so the decoys are not a recurring param-less
+-- `local function <id>() ... return <id> end` block a scanner could key on.
 local function build_function(prng)
     local name = prng:identifier(prng:range(6, 12))
+    local params = {}
+    for _ = 1, prng:range(0, 2) do params[#params + 1] = prng:identifier(prng:range(4, 8)) end
+    -- Params seed the visible dataflow but stay pure (a param + literal), so the
+    -- body still only ever touches its own locals.
     local locals, lines = {}, {}
+    for _, p in ipairs(params) do locals[#locals + 1] = p end
     local count = prng:range(1, 4)
     for _ = 1, count do
         local var = prng:identifier(prng:range(6, 12))
         lines[#lines + 1] = "    local " .. var .. " = " .. value_expr(prng, locals)
         locals[#locals + 1] = var
     end
-    lines[#lines + 1] = "    return " .. locals[prng:range(1, #locals)]
-    return "local function " .. name .. "()\n" .. table.concat(lines, "\n") .. "\nend\n"
+    -- Return one, two, or (rarely) zero values.
+    local rkind = prng:range(1, 3)
+    if rkind == 1 then
+        lines[#lines + 1] = "    return " .. locals[prng:range(1, #locals)]
+    elseif rkind == 2 then
+        lines[#lines + 1] = "    return " .. locals[prng:range(1, #locals)] .. ", " .. locals[prng:range(1, #locals)]
+    else
+        lines[#lines + 1] = "    return"
+    end
+    local sig = "(" .. table.concat(params, ", ") .. ")"
+    local body = table.concat(lines, "\n")
+    if prng:range(0, 1) == 0 then
+        return "local function " .. name .. sig .. "\n" .. body .. "\nend"
+    end
+    return "local " .. name .. " = function" .. sig .. "\n" .. body .. "\nend"
 end
 
 function Step.apply(source, options)
@@ -81,14 +105,22 @@ function Step.apply(source, options)
     local body = source:sub(#shebang + 1)
     local blocks, bytes = {}, 0
     for _ = 1, max_functions do
-        local text = build_function(prng)
+        -- Frame each decoy with its own leading/trailing newline so it can never
+        -- fuse with a neighbouring token when spliced at a statement boundary.
+        local text = "\n" .. build_function(prng) .. "\n"
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    local result = shebang .. table.concat(blocks) .. body
+    -- Scatter the decoys across random top-level statement boundaries instead of
+    -- stacking them into one contiguous prefix a deobfuscator could strip whole.
+    local result = shebang .. Safe.interleave(body, prng, blocks)
     local valid, message, position = Validate.syntax(result)
-    if not valid then error(Step.name .. ": generated source is invalid at " .. position .. ": " .. message) end
+    if not valid then
+        result = shebang .. table.concat(blocks) .. body
+        valid, message, position = Validate.syntax(result)
+        if not valid then error(Step.name .. ": generated source is invalid at " .. position .. ": " .. message) end
+    end
     Step.last_metadata = { function_count = #blocks, generated_bytes = bytes, dead_only = true, validated = true }
     return result
 end

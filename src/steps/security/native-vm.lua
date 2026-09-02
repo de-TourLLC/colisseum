@@ -1,4 +1,4 @@
-local Step = { name = "native-vm", version = 2 }
+local Step = { name = "native-vm", version = 3 }
 
 Step.metadata = {
     id = Step.name,

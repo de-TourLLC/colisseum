@@ -248,7 +248,13 @@ if __close then __close() end
 if not __ok then error(__a, 0) end
 return __a, __b, __c, __d
 ]=]
-    return mangle(template, "__", prefix):format(fiu_source, environment_expr, seal(bytecode, seed, prefix))
+    -- Argument order MUST match the template's placeholder order:
+    --   1) %s  -> the embedded Fiu VM source
+    --   2) __bytecode = %s   -> the sealed bytecode reconstruction
+    --   3) __environment = %s -> the sandbox environment expression
+    -- (These last two were previously swapped, so __bytecode received the
+    -- environment table and luau_load got a table instead of the bytecode string.)
+    return mangle(template, "__", prefix):format(fiu_source, seal(bytecode, seed, prefix), environment_expr)
 end
 
 -- Accept only a safe relative Fiu source path. Absolute paths, drive letters,
