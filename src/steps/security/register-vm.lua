@@ -100,10 +100,67 @@ function Step.apply(source, options)
     local bytecode_src = Minify.apply(harden(bc_raw, "regbc", true))
     local runtime_src = Minify.apply(harden(rt_raw, "regrt", false))
 
+    -- Post-VM noise round. Wraps the finished bundle (which is already the sealed,
+    -- encrypted register VM) in a second layer of semantic junk: decoy functions,
+    -- always-false opaque predicates guarding dead blocks, and meaningless "stages"
+    -- that compute and discard throwaway values. A static deobfuscator that has
+    -- just unwound the VM now finds a fresh pile of garbage whose statements
+    -- assemble into nothing, yet the emitted program still runs and returns
+    -- exactly V[1..4] unchanged. Drawn from its own sub-seed so the noise is
+    -- per-build but deterministic under an explicit seed. Only constructs the
+    -- tree-walker register VM supports are used (locals, local function, for,
+    -- if/then/return/end, and/or/==/~=, + - * %, numeric literals, [] indexing),
+    -- and no builtins are called on the correctness-critical path.
+    local noise_prng = Entropy.prng(tostring(seed) .. "|postvm")
+    local function decoy_ident()
+        return prefix .. noise_prng:identifier(noise_prng:range(4, 8))
+    end
+    local function noise_prologue()
+        local out = {}
+        -- 2-4 meaningless decoy functions that are never called.
+        local nfun = noise_prng:range(2, 4)
+        for i = 1, nfun do
+            local name = decoy_ident()
+            local arg = decoy_ident()
+            local acc = decoy_ident()
+            out[#out + 1] = "local function " .. name .. "(" .. arg .. ") local " .. acc ..
+                "=0 for " .. decoy_ident() .. "=1," .. tostring(noise_prng:range(2, 9)) ..
+                " do " .. acc .. "=(" .. acc .. "+(" .. arg .. "*" .. tostring(noise_prng:range(2, 7)) ..
+                "))%9973 end return " .. acc .. " end"
+        end
+        -- 2-4 opaque always-false predicates guarding dead blocks. The predicates
+        -- are (a==b) and (lit ~= lit+k): the first is true, the second false, so
+        -- the guarded `return` is unreachable and execution always flows on.
+        local npred = noise_prng:range(2, 4)
+        for i = 1, npred do
+            local a, b = decoy_ident(), decoy_ident()
+            local lit = tostring(noise_prng:range(2, 9000))
+            local keep = tostring(noise_prng:range(1, 3))
+            local base = noise_prng:range(2, 9000)
+            out[#out + 1] = "local " .. a .. "," .. b .. "=" .. lit .. "," .. lit ..
+                " if " .. a .. "==" .. b .. " and " .. tostring(base) .. "==" .. tostring(base + noise_prng:range(1, 3)) ..
+                " then return " .. decoy_ident() .. "," ..
+                decoy_ident() .. " end " .. decoy_ident() .. "=" .. keep
+        end
+        -- 1-2 "fake stages" that fold plain constants but discard every result.
+        local nstage = noise_prng:range(1, 2)
+        for i = 1, nstage do
+            local sink = decoy_ident()
+            local stage = decoy_ident()
+            out[#out + 1] = "local " .. sink .. "=" .. tostring(noise_prng:range(0, 50)) ..
+                " local " .. stage .. "=" .. tostring(noise_prng:range(2, 7)) ..
+                " for " .. decoy_ident() .. "=1," .. tostring(noise_prng:range(3, 12)) ..
+                " do " .. sink .. "=(" .. sink .. "*" .. stage .. ")%" .. tostring(noise_prng:range(101, 997)) ..
+                " end " .. sink .. "=" .. sink .. "*0"
+        end
+        return table.concat(out, " ")
+    end
+
     report(0.92, "vm:finishing")
     local B, R, C, P, V, E = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "V", prefix .. "E"
     local environment = "(function() local g=rawget(_G,\"getfenv\") return (type(g)==\"function\" and g(0)) or _G end)()"
     local bundle = table.concat({
+        noise_prologue(),
         "local " .. B .. "=(function()", bytecode_src, "end)()",
         "local " .. R .. "=(function() local require=function() return " .. B .. " end", runtime_src, "end)()",
         "local " .. C .. "=" .. sealed,

@@ -37,7 +37,7 @@ local function decode(value)
                 bytes[#bytes + 1] = 10
                 index = index + 1
             elseif char == "\r" then
-                bytes[#bytes + 1] = 10
+                bytes[#bytes + 1] = 13
                 index = index + 1
                 if value:sub(index, index) == "\n" then index = index + 1 end
             else

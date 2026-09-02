@@ -44,6 +44,11 @@ end
 -- A fresh strong seed for this build. Mixes several independent entropy
 -- sources so identical input never yields identical output, and the counter
 -- guarantees two calls in the same clock tick still diverge.
+--
+-- The returned "seed" is a wide string (two independent 31-bit folds = ~62 bits
+-- of entropy) rather than a single 31-bit integer. Derive PRNG state from it
+-- via Entropy.fold, which folds the full material down to a PRNG state; the
+-- full width is retained when the string itself is used to key the ciphers.
 function Entropy.collect()
     counter = counter + 1
     local material = table.concat({
@@ -53,7 +58,11 @@ function Entropy.collect()
         tostring(Entropy),     -- table address, another ASLR source
         tostring(counter)
     }, "|")
-    return fold(material)
+    -- Fold the same material twice from two different starting states and join,
+    -- so the returned seed carries ~2x the entropy of a single 31-bit fold.
+    local a = fold(material, 2166136261)
+    local b = fold(material, 2654435761)
+    return tostring(a) .. ":" .. tostring(b)
 end
 
 -- Derive an independent sub-seed for a labelled consumer from a base seed, so

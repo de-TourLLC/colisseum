@@ -25,15 +25,25 @@ Step.version = 1
 
 -- Build-time FNV-1a-style fold. This MUST mirror the hash emitted into the
 -- guard below byte-for-byte so the runtime recomputation matches the value we
--- embed here. Result is an integer-valued string (<= 10 digits), which
--- tostring renders identically across Lua 5.1, LuaJIT, Lua 5.3/5.4 and Luau.
+-- embed here. Returns an integer (< 2^31) so the guarded sum adds exactly.
 local function fold(value)
     local state = 2166136261 % 2147483647
     for index = 1, #value do
         state = (state + value:byte(index) * 16777619) % 2147483647
         state = (state * 48271) % 2147483647
     end
-    return tostring(state)
+    return state
+end
+
+-- Second, independent fold (seeded multiply-accumulate) emitted into the guard
+-- as _ri_hash2. Different recurrence, per-build seed: recomputing the guard's
+-- expected value requires replicating BOTH folds and the seed.
+local function fold2(value, seed)
+    local state = seed % 2147483647
+    for index = 1, #value do
+        state = (state * 31 + value:byte(index)) % 2147483647
+    end
+    return state
 end
 
 -- The guard template. `_ri_` variable prefixes are salted per build (so two
@@ -46,8 +56,13 @@ do
     local _ri_error = error
     local _ri_tostring = tostring
     local _ri_global = _G
-    local _ri_nonce = %q
-    local _ri_expected = %q
+    -- Tripwire constants are never single literals: the nonce is two
+    -- concatenated string pieces and the expected digest is the sum of two
+    -- separately-embedded addends. Repairing the guard means recomputing BOTH
+    -- independent folds and reproducing the exact split.
+    local _ri_nonce = %q .. %q
+    local _ri_seed = %d
+    local _ri_expected = ((%d) + (%d))
 
     local function _ri_hash(_ri_value)
         local _ri_state = 2166136261 %% 2147483647
@@ -55,12 +70,22 @@ do
             _ri_state = (_ri_state + _ri_value:byte(_ri_index) * 16777619) %% 2147483647
             _ri_state = (_ri_state * 48271) %% 2147483647
         end
-        return _ri_tostring(_ri_state)
+        return _ri_state
     end
 
-    -- Self-consistency tripwire: the embedded nonce must still hash to the
-    -- value baked in at build time.
-    if _ri_hash(_ri_nonce) ~= _ri_expected then
+    -- Second, independent folded digest over the same nonce, seeded per build.
+    -- Touching the seed, the nonce, or the expected sum surfaces a mismatch.
+    local function _ri_hash2(_ri_value)
+        local _ri_state = _ri_seed %% 2147483647
+        for _ri_index = 1, #_ri_value do
+            _ri_state = (_ri_state * 31 + _ri_value:byte(_ri_index)) %% 2147483647
+        end
+        return _ri_state
+    end
+
+    -- Self-consistency tripwire: the embedded nonce must still hash, under
+    -- both independent folds, to the value baked in at build time.
+    if _ri_hash(_ri_nonce) + _ri_hash2(_ri_nonce) ~= _ri_expected then
         _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x5C08", 0)
     end
 
@@ -128,13 +153,23 @@ function Step.apply(source, options)
     -- prefix rename below can never touch the embedded literal, and it stays
     -- deterministic for a given seed while remaining unique otherwise.
     local nonce = salt .. "." .. tostring(prng:next()) .. "." .. tostring(prng:next())
-    local expected = fold(nonce)
+    -- Tripwire values. The nonce is split into two concatenated string pieces
+    -- and the combined expected digest is a sum of two addends, so neither
+    -- constant exists as one editable literal in the output.
+    local seed2 = (fold(salt .. "|ri-seed|") % 2147483646) + 1
+    local expected = fold(nonce) + fold2(nonce, seed2)
+    local cut = math.floor(#nonce / 2)
+    local nonce_piece_1 = nonce:sub(1, cut)
+    local nonce_piece_2 = nonce:sub(cut + 1)
+    local expected_piece_2 = expected % 1000003
+    local expected_piece_1 = expected - expected_piece_2
 
-    -- Rename the guard's local variables first (gsub leaves the %q/%% format
-    -- directives untouched), then splice in the nonce and its expected hash so
-    -- neither is affected by the rename.
+    -- Rename the guard's local variables first (gsub leaves the %q/%d format
+    -- directives untouched), then splice in the nonce pieces, fold seed and
+    -- expected addends so none are affected by the rename.
     local prefix = "_ri" .. salt .. "_"
-    local guard = TEMPLATE:gsub("_ri_", prefix):format(nonce, expected)
+    local guard = TEMPLATE:gsub("_ri_", prefix):format(
+        nonce_piece_1, nonce_piece_2, seed2, expected_piece_1, expected_piece_2)
 
     return shebang .. guard .. "\n" .. body
 end

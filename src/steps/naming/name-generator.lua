@@ -6,10 +6,11 @@ end
 
 -- Produces confusable identifiers in the classic confusable style: a branded
 -- prefix followed by characters drawn from a tiny, visually similar alphabet.
--- Defaults to `itzCool_` + 6-8 of {j, L}. All of it is configurable per build.
+-- Defaults to `coli_` + 6-8 of {j, L}, matching the VM backends' colon prefix.
+-- All of it is configurable per build.
 function Generator.new(seed, config)
     config = config or {}
-    local prefix = config.prefix or "itzKatzito_"
+    local prefix = config.prefix or "coli_"
     local charset = config.charset or "jL"
     local min_len = config.min_length or 6
     local max_len = config.max_length or 8

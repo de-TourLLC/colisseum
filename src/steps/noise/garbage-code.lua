@@ -57,18 +57,13 @@ function Step.apply(source, options)
     if max_bytes > 65536 then error(Step.name .. ": max_bytes exceeds the hard limit") end
     local shebang = source:match("^(#![^\n]*\n)") or ""
     local body = source:sub(#shebang + 1)
-    -- A seed makes the injected noise unique per build (names, values, guards);
-    -- without one the step stays deterministic for reproducible, testable output.
-    local prng = options.seed ~= nil and Entropy.prng(options.seed) or nil
+    -- Always drive the injected noise from a PRNG: without one the fallback would
+    -- emit a fixed `_colisseum_dead_N` prefix that a regex could strip on sight.
+    local prng = Entropy.prng(options.seed or "garbage-code")
     local blocks, bytes = {}, 0
     for index = 1, max_insertions do
-        local text
-        if prng then
-            local statement = "local " .. prng:identifier(prng:range(6, 12)) .. " = " .. value_expr(prng)
-            text = prng:pick(guards)(statement, prng)
-        else
-            text = "if false then\n    local _colisseum_dead_" .. index .. " = " .. (index * 17) .. "\nend\n"
-        end
+        local statement = "local " .. prng:identifier(prng:range(6, 12)) .. " = " .. value_expr(prng)
+        local text = prng:pick(guards)(statement, prng)
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text
         bytes = bytes + #text

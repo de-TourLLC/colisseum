@@ -49,6 +49,11 @@ function Step.apply(source, options)
     local type_depth = 0
     local local_function = false
     local function_header = false
+    -- A `repeat ... until <cond>` keeps the repeat scope open through its
+    -- condition: in Lua the condition sees the locals declared inside the body.
+    -- We defer the pop until the condition expression has provably ended.
+    local repeat_condition = false
+    local repeat_depth = 0
     -- `local x = <init>`: the just-declared names are NOT in scope inside their own
     -- initializer (Lua evaluates the RHS in the enclosing scope). Track them so a
     -- self-reference like `local print = print` resolves the RHS to the outer/global
@@ -87,10 +92,48 @@ function Step.apply(source, options)
         return tokens[index + 1]
     end
 
+    -- Tokens that cannot appear inside an expression: seeing one at bracket depth 0
+    -- right after `until <expr>` means the outer statement/block ended, so the
+    -- repeat scope (still active for the condition) must be closed before it.
+    local statement_boundary_keywords = {
+        ["local"] = true, ["if"] = true, ["while"] = true, ["for"] = true,
+        ["do"] = true, ["function"] = true, ["return"] = true, ["break"] = true,
+        ["repeat"] = true, ["then"] = true, ["else"] = true, ["elseif"] = true,
+        ["end"] = true, ["until"] = true, [";"] = true
+    }
+    local operand_end = {
+        [")"] = true, ["]"] = true, ["}"] = true
+    }
+
     for index, token in ipairs(tokens) do
         local value = token.value
         local before = previous(index)
         local after = next_token(index)
+        -- While inside a repeat condition expression, first decide whether the
+        -- expression has ended. If it has (statement/block keyword at depth 0, an
+        -- operand-starting token following an operand-ending token, or the end of
+        -- the stream), pop the repeat scope now -- before the current token is
+        -- processed -- so references in the condition resolve to the repeat body's
+        -- locals, and the code that follows sees the enclosing scope.
+        if repeat_condition then
+            if value == "(" or value == "[" or value == "{" then
+                repeat_depth = repeat_depth + 1
+            elseif value == ")" or value == "]" or value == "}" then
+                repeat_depth = math.max(0, repeat_depth - 1)
+            elseif repeat_depth == 0 then
+                local operand_starts = (token.kind == "identifier" and not reserved[value])
+                    or token.kind == "number" or token.kind == "string"
+                local ended_by_keyword = statement_boundary_keywords[value]
+                local followed_operand = before and
+                    (before.kind == "number" or before.kind == "string"
+                        or operand_end[before.value]
+                        or (before.kind == "identifier" and not reserved[before.value]))
+                if ended_by_keyword or (operand_starts and followed_operand) then
+                    pop()
+                    repeat_condition = false
+                end
+            end
+        end
         -- A local's initializer ends once its value is complete and the next token
         -- starts a new statement (i.e. the previous token ended a value and this one
         -- does not continue the expression). Clearing here lets later uses of the new
@@ -191,8 +234,14 @@ function Step.apply(source, options)
         elseif value == "else" or value == "elseif" then
             pop()
             push(value)
-        elseif value == "end" or value == "until" then
+        elseif value == "end" then
             pop()
+        elseif value == "until" then
+            -- `repeat ... until <cond>`: do NOT pop here. The condition still sees
+            -- the repeat scope; the deferred-pop logic above closes it at the first
+            -- token that provably ends the condition expression.
+            repeat_condition = true
+            repeat_depth = 0
         elseif declaring and value == "=" then
             declaring = false
         elseif declaring and value ~= "," then

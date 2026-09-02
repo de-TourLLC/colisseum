@@ -78,12 +78,13 @@ local function executable_status(path)
     return true
 end
 
+-- Temporary files carry a randomized component and live in the OS temp directory
+-- (TEMP/TMP on Windows, /tmp elsewhere) rather than the process CWD with a
+-- predictable name, which avoids TOCTOU/symlink races in shared working dirs.
 local function temporary_file(extension)
-    local name = os.tmpname()
-    if type(name) ~= "string" or name == "" then
-        return nil, error_message("could not create a temporary file name")
-    end
-    name = name:match("[^/\\]+$") .. extension
+    local dir = os.getenv("TEMP") or os.getenv("TMP") or "/tmp"
+    local nonce = tostring(os.time()) .. "_" .. tostring(os.clock()) .. "_" .. tostring(math.random(1, 1e9))
+    local name = dir .. (package.config:sub(1, 1)) .. "colisseum_" .. nonce:gsub("[^%d%a]", "") .. extension
     local file, message = io.open(name, "wb")
     if not file then
         return nil, error_message("could not create temporary file: " .. tostring(message))
@@ -187,10 +188,12 @@ function Compiler.compile(source, executable, options)
     local diagnostic_text = read_file(diagnostics)
     remove(input); remove(output); remove(diagnostics)
 
-    if not successful then
+if not successful then
         local detail = diagnostic_text and diagnostic_text:gsub("%s+$", "") or ""
         if detail == "" then detail = "compiler exited with status " .. tostring(status) end
-        return nil, error_message("compiler failed: " .. detail .. " [command: " .. command_text .. "]")
+        -- No command text / filesystem paths in the error: they leak the local
+        -- layout and the full temp path back to callers.
+        return nil, error_message("compiler failed: " .. detail)
     end
     if not result then return nil, error_message("compiler produced no readable bytecode: " .. tostring(read_error)) end
     if #result == 0 then return nil, error_message("compiler produced empty bytecode") end

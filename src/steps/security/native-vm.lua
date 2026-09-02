@@ -104,11 +104,27 @@ function Step.apply(source, options)
 
     -- Embed the VM with its opcode table reordered to the per-build permutation
     -- and its dispatch rebranded to the KAT enum, then strip comments/whitespace
-    -- so nothing readable survives and it is smaller.
+    -- so nothing readable survives and it is smaller. The bytecode module is also
+    -- name-mangled and its opcode-name strings encrypted (exactly like the
+    -- register backend), so the kind list no longer ships as readable plain text.
     local kinds_literal = "{\"" .. table.concat(permuted_kinds, "\",\"") .. "\"}"
     local bytecode_raw = read(core_dir .. "bytecode.lua"):gsub("local kinds = %b{}", "local kinds = " .. kinds_literal, 1)
-    local bytecode_src = Minify.apply(bytecode_raw)
-    local runtime_src = Minify.apply(kat_table .. katify(read(core_dir .. "runtime.lua")))
+    local Rename = require("src.steps.naming.rename")
+    local StepPaths = require("src.core.step-paths")
+    local SplitStrings = require(StepPaths.module("split-strings"))
+    local ConstantArray = require(StepPaths.module("constant-array"))
+    local function harden(src, salt, encrypt_strings)
+        local seed0 = Package.digest(salt .. "|" .. tostring(seed))
+        local function pass(fn) local ok, out = pcall(fn); if ok and type(out) == "string" and #out > 0 then src = out end end
+        pass(function() return Rename.apply(src, { seed = seed0 }) end)
+        if encrypt_strings then
+            pass(function() return SplitStrings.apply(src, { seed = seed0, target = "luau" }) end)
+            pass(function() return ConstantArray.apply(src, { seed = seed0, target = "luau" }) end)
+        end
+        return src
+    end
+    local bytecode_src = Minify.apply(harden(bytecode_raw, "natbc", true))
+    local runtime_src = Minify.apply(harden(kat_table .. katify(read(core_dir .. "runtime.lua")), "natrt", false))
 
     local B, R, C, P, V, E = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "V", prefix .. "E"
     -- Resolve globals from the running script's own environment first

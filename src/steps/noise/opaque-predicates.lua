@@ -2,7 +2,7 @@ local Lexer = require("src.core.lexer")
 local Validate = require("src.core.validate")
 local Entropy = require("src.core.entropy")
 
-local Step = { name = "opaque-predicates", version = 1 }
+local Step = { name = "opaque-predicates", version = 2 }
 Step.metadata = {
     id = Step.name,
     version = Step.version,
@@ -21,9 +21,10 @@ end
 
 -- Opaque-FALSE predicates: each is provably always false, so the block it guards
 -- is dead and semantics are preserved -- but a deobfuscator must reason about an
--- arithmetic or string invariant to prove it, instead of stripping `if false`.
+-- arithmetic, float, or type invariant to prove it, instead of stripping `if false`.
+-- Mixing several families means no single constant-folding rule kills them all.
 local function opaque_false(prng)
-    local kind = prng:range(1, 3)
+    local kind = prng:range(1, 5)
     if kind == 1 then
         -- A string's length is never negative.
         return "#tostring(" .. prng:range(100, 999999) .. ") < 0"
@@ -31,10 +32,16 @@ local function opaque_false(prng)
         -- A perfect square mod 4 is only ever 0 or 1.
         local n = prng:range(3, 99999)
         return "(" .. n .. "*" .. n .. ")%" .. "4 == " .. (prng:range(0, 1) == 0 and 2 or 3)
+    elseif kind == 3 then
+        -- The product of two consecutive integers is always even.
+        local n = prng:range(3, 99999)
+        return "(" .. n .. "*(" .. n .. "+1))%" .. "2 == 1"
+    elseif kind == 4 then
+        -- IEEE NaN is never equal to itself: (0/0) == (0/0) is always false.
+        return "(0/0)==(0/0)"
     end
-    -- The product of two consecutive integers is always even.
-    local n = prng:range(3, 99999)
-    return "(" .. n .. "*(" .. n .. "+1))%" .. "2 == 1"
+    -- `type` of a number literal is always "number", never "userdata".
+    return "type(" .. prng:range(-9999, 9999) .. ") == \"userdata\""
 end
 
 local function value_expr(prng)
@@ -42,6 +49,36 @@ local function value_expr(prng)
     if kind == 1 then return tostring(prng:range(0, 999999)) end
     if kind == 2 then return tostring(prng:range(0, 9999)) .. "+" .. tostring(prng:range(0, 9999)) end
     return "{" .. tostring(prng:range(0, 999)) .. "}"
+end
+
+-- Collect every safe top-level insertion point (the prefix plus each statement
+-- boundary) and distribute the dead blocks across random distinct points, so a
+-- deobfuscator cannot strip a single contiguous "noise prefix".
+local function insertion_points(body, prng, count)
+    local tokens = Lexer.scan(body)
+    local points = { 1 }
+    local depth = 0
+    for index, token in ipairs(tokens) do
+        local prev = tokens[index - 1]
+        if prev and token.start > 1 and depth == 0 and (prev.value == ";" or prev.value == "end" or prev.value == "until") then
+            points[#points + 1] = token.start
+        end
+        local value = token.value
+        if value == "then" or value == "do" or value == "function" or value == "repeat" then
+            depth = depth + 1
+        elseif value == "end" or value == "until" then
+            if depth > 0 then depth = depth - 1 end
+        end
+    end
+    for ii = #points, 2, -1 do
+        local jj = prng:range(1, ii)
+        points[ii], points[jj] = points[jj], points[ii]
+    end
+    if count >= #points then return points end
+    local chosen = {}
+    for ii = 1, count do chosen[ii] = points[ii] end
+    table.sort(chosen)
+    return chosen
 end
 
 function Step.apply(source, options)
@@ -69,9 +106,37 @@ function Step.apply(source, options)
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    local result = shebang .. table.concat(blocks) .. body
+    -- Interleave the dead blocks at random top-level statement boundaries so the
+    -- guard region is not a single trivially strippable prefix. Each insertion is
+    -- at a proven statement boundary, so splicing cannot corrupt the program.
+    local result
+    if #blocks > 0 then
+        local points = insertion_points(body, prng, #blocks)
+        local parts, cursor = {}, 1
+        for index, text in ipairs(blocks) do
+            local at = points[index]
+            if at ~= nil and at >= cursor then
+                parts[#parts + 1] = body:sub(cursor, at - 1)
+                parts[#parts + 1] = text
+                cursor = at
+            else
+                parts[#parts + 1] = body:sub(cursor)
+                parts[#parts + 1] = text
+                parts[#parts + 1] = ""
+                cursor = #body + 1
+            end
+        end
+        parts[#parts + 1] = body:sub(cursor)
+        result = shebang .. table.concat(parts)
+    else
+        result = source
+    end
     valid, message, position = Validate.syntax(result)
-    if not valid then error(Step.name .. ": generated source is invalid at " .. position .. ": " .. message) end
+    if not valid then
+        result = shebang .. table.concat(blocks) .. body
+        valid, message, position = Validate.syntax(result)
+        if not valid then error(Step.name .. ": generated source is invalid at " .. position .. ": " .. message) end
+    end
     Step.last_metadata = { insertion_count = #blocks, generated_bytes = bytes, dead_only = true, validated = true }
     return result
 end

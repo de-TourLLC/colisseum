@@ -16,7 +16,7 @@ local compound_assign = {
 }
 
 local function parser(tokens)
-    local object = { tokens = tokens, index = 1 }
+    local object = { tokens = tokens, index = 1, depth = 0, max_depth = 512 }
 
     function object:peek()
         return self.tokens[self.index]
@@ -52,7 +52,32 @@ local function parser(tokens)
         end
     end
 
+    -- Bound expression/primary recursion so crafted deeply-nested input cannot
+    -- overflow the Lua call stack. Raised in expression() and primary() only:
+    -- those are the two mutually-recursive productions with unbounded nesting.
+    function object:enter_expr()
+        local depth = self.depth + 1
+        if depth > self.max_depth then
+            error("parser: nesting too deep (over " .. self.max_depth .. " levels)")
+        end
+        self.depth = depth
+    end
+
+    function object:leave_expr()
+        self.depth = self.depth - 1
+    end
+
     function object:primary()
+        self:enter_expr()
+        local ok, result = pcall(function()
+            return self:primary_body()
+        end)
+        self:leave_expr()
+        if not ok then error(result, 0) end
+        return result
+    end
+
+    function object:primary_body()
         local token = self:peek()
         if not token then error("parser: unexpected end of input") end
         if token.value == "(" then
@@ -158,6 +183,16 @@ local function parser(tokens)
     end
 
     function object:expression(minimum)
+        self:enter_expr()
+        local ok, result = pcall(function()
+            return self:expression_body(minimum)
+        end)
+        self:leave_expr()
+        if not ok then error(result, 0) end
+        return result
+    end
+
+    function object:expression_body(minimum)
         local token = self:peek()
         local left
         if token and (token.value == "not" or token.value == "-" or token.value == "#") then
@@ -316,12 +351,22 @@ local function parser(tokens)
             if self:take("=") then
                 repeat values[#values + 1] = self:expression(0) until not self:take(",") end
             return { kind = "local", names = names, values = values, start = token.start, finish = (self.tokens[self.index - 1] or token).finish }
-        elseif token.value == "return" then
+elseif token.value == "return" then
             self:take()
             local values = {}
             local next_token = self:peek()
-            if next_token and next_token.value ~= "end" then
-                repeat values[#values + 1] = self:expression(0) until not self:take(",") end
+            -- A `return` is bare when it is followed by a block terminator or eof:
+            -- the lexer tags keywords as identifiers, so `return else`, `return end`,
+            -- `return until` and `return elseif` must not swallow the terminator as
+            -- a return value (Lua allows a retstat only at the end of a block).
+            -- A `return` is bare when it is followed by a block terminator or the
+            -- end of input: the lexer tags keywords as identifiers, so `return else`,
+            -- `return end`, `return until` and `return elseif` must not swallow the
+            -- terminator as a return value (a retstat is only valid at block end).
+            if next_token and next_token.value ~= "end" and next_token.value ~= "else"
+                and next_token.value ~= "elseif" and next_token.value ~= "until" then
+                repeat values[#values + 1] = self:expression(0) until not self:take(",")
+            end
             return { kind = "return", values = values, start = token.start, finish = (self.tokens[self.index - 1] or token).finish }
         end
         local value = self:expression(0)
@@ -349,6 +394,20 @@ local function parser(tokens)
     end
 
     function object:block(stop)
+        local depth = self.depth + 1
+        if depth > self.max_depth then
+            error("parser: nesting too deep (over " .. self.max_depth .. " levels)")
+        end
+        self.depth = depth
+        local ok, result = pcall(function()
+            return self:block_body(stop)
+        end)
+        self.depth = depth - 1
+        if not ok then error(result, 0) end
+        return result
+    end
+
+    function object:block_body(stop)
         local body = {}
         while self:peek() do
             local value = self:peek().value

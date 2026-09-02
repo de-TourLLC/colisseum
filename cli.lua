@@ -147,7 +147,7 @@ local TIPS = {
     "Encrypting with ChaCha (not the dance)",
     "Stacking layers like a lasagna",
     "The deobfuscator is already sweating",
-    "Renaming everything to itzCool_jLjLjL",
+    "Renaming everything to coli_jLjLjL",
     "If you crack this, tell me how you did it",
     "task.wait() so Roblox stops whining",
     "Injecting gourmet junk code",

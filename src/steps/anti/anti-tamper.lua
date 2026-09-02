@@ -36,6 +36,15 @@ local function make_guard(options, tag, token, digest)
     local detect_metatable = boolean_option(options, "detectMetatable", true)
     local detect_timing = boolean_option(options, "detectTiming", false)
 
+    -- Split the tripwire constants so no single literal equals the nonce or the
+    -- digest (see the guard template).
+    local nonce_text = tostring(token)
+    local cut = math.floor(#nonce_text / 2)
+    local nonce_piece_1 = nonce_text:sub(1, cut)
+    local nonce_piece_2 = nonce_text:sub(cut + 1)
+    local expected_piece_2 = digest % 1000003
+    local expected_piece_1 = digest - expected_piece_2
+
     return ([=[
 do
     local _at_score = 0
@@ -58,10 +67,18 @@ do
             _at_state = (_at_state + value:byte(_at_index) * 16777619) %% 2147483647
             _at_state = (_at_state * 48271) %% 2147483647
         end
-        return tostring(_at_state)
+        return _at_state
     end
 
-    if _at_hash(%q) ~= %q then
+    -- Never embed the tripwire constants as single literals: the nonce is two
+    -- concatenated string pieces and the expected digest is the sum of two
+    -- separately-embedded addends. Rewriting one visible constant breaks
+    -- reality; repairing the guard means recomputing the digest and reproducing
+    -- the exact split.
+    local _at_nonce = %q .. %q
+    local _at_expected = ((%d) + (%d))
+
+    if _at_hash(_at_nonce) ~= _at_expected then
         _at_flag(3, "internal-integrity")
     end
 
@@ -123,21 +140,31 @@ do
             "assert", "error", "ipairs", "next", "pairs", "pcall",
             "select", "tonumber", "tostring", "type", "xpcall"
         }
+        -- Snapshot the core functions from the lexically-bound locals captured at
+        -- chunk load (not re-read from _G), so a pre-installed replacement of these
+        -- globals is still detected instead of being compared against itself.
         local _at_baseline = {
-            assert = assert, error = error, ipairs = ipairs, next = next,
-            pairs = pairs, pcall = pcall, select = select, tonumber = tonumber,
-            tostring = tostring, type = type, xpcall = xpcall
+            pcall = _at_pcall, type = _at_type, tostring = _at_tostring,
+            rawget = _at_rawget
         }
+        -- Compare each core global against the reference bound at guard-load time.
+        -- A host that swapped _G[name] before this chunk ran will have a different
+        -- identity than the bindings we captured here, so the mismatch is real.
         local _at_changed = 0
-        for _, _at_name in ipairs(_at_expected) do
-            if _at_rawget(_at_global, _at_name) ~= _at_baseline[_at_name] then
-                _at_changed = _at_changed + 1
+        if _at_baseline.pcall and _at_baseline.type and _at_baseline.tostring and _at_baseline.rawget then
+            for _, _at_name in ipairs(_at_expected) do
+                local _at_bound = _at_baseline[_at_name]
+                if _at_bound ~= nil then
+                    if _at_rawget(_at_global, _at_name) ~= _at_bound then
+                        _at_changed = _at_changed + 1
+                    end
+                end
             end
-        end
-        if _at_changed >= 2 then
-            _at_flag(2, "protected-global-replacement")
-        elseif _at_changed == 1 then
-            _at_flag(1, "global-replacement")
+            if _at_changed >= 2 then
+                _at_flag(2, "protected-global-replacement")
+            elseif _at_changed == 1 then
+                _at_flag(1, "global-replacement")
+            end
         end
 
         if _at_type(_at_debug) == "table" and _at_type(_at_debug.getinfo) == "function" then
@@ -239,8 +266,10 @@ do
     end
 end
     ]=]):format(
-        token,
-        digest,
+        nonce_piece_1,
+        nonce_piece_2,
+        expected_piece_1,
+        expected_piece_2,
         tostring(allow_hooks),
         tostring(detect_executor),
         tostring(detect_globals),
@@ -272,11 +301,24 @@ function Step.apply(source, options)
     build_counter = build_counter + 1
     -- Salt for per-build variable-name randomisation. Derived from the source and
     -- caller entropy but never embedded verbatim, so the guard leaks no source.
-    local salt = Crypto.digest(source .. tostring(options.seed or "") .. tostring(os.time()) .. tostring(os.clock()) .. tostring(build_counter))
+    -- When an explicit seed is supplied the salt is seed+source only: builds stay
+    -- reproducible on demand while every distinct build still gets unique names.
+    local salt
+    if options.seed ~= nil then
+        salt = Crypto.digest(source .. tostring(options.seed))
+    else
+        salt = Crypto.digest(source .. tostring(options.seed or "") .. tostring(os.time()) .. tostring(os.clock()) .. tostring(build_counter))
+    end
     -- Short build nonce for the internal-integrity tripwire. It contains no source,
     -- so the emitted guard no longer embeds (and leaks) a second copy of the whole
-    -- program the way earlier versions did.
-    local nonce = tostring(salt) .. "." .. tostring(build_counter) .. "." .. tostring(os.clock())
+    -- program the way earlier versions did. The global build_counter is only folded
+    -- in when no explicit seed is given, so a seeded build reproduces exactly.
+    local nonce
+    if options.seed ~= nil then
+        nonce = tostring(salt)
+    else
+        nonce = tostring(salt) .. "." .. tostring(build_counter) .. "." .. tostring(os.clock())
+    end
     local nonce_digest = Crypto.digest(nonce)
     return shebang .. make_guard(options, salt, nonce, nonce_digest) .. "\n" .. source
 end

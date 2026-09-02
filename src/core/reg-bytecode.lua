@@ -120,7 +120,9 @@ function RegBytecode.decode(data)
     local function rstr() local n = ru32(); return rd(n) end
     if rd(4) ~= RegBytecode.MAGIC then error("reg-bytecode: bad magic") end
     if ru8() ~= RegBytecode.VERSION then error("reg-bytecode: bad version") end
-    local function r_proto()
+    local function r_proto(depth)
+        depth = (depth or 0) + 1
+        if depth > 256 then error("reg-bytecode: proto nesting exceeds 256 levels") end
         local p = { code = {}, constants = {}, protos = {}, upvals = {} }
         p.numparams = ru8(); p.is_vararg = ru8() == 1; p.maxstack = ru16()
         for _ = 1, ru16() do local k = ru8(); p.upvals[#p.upvals + 1] = { kind = k == 0 and "local" or "upval", index = ru16() } end
@@ -133,7 +135,7 @@ function RegBytecode.decode(data)
         end
         local ncode = ru32()
         for i = 1, ncode do p.code[i] = { ru8(), ri32(), ri32(), ri32() } end
-        for _ = 1, ru16() do p.protos[#p.protos + 1] = r_proto() end
+        for _ = 1, ru16() do p.protos[#p.protos + 1] = r_proto(depth) end
         return p
     end
     return r_proto()

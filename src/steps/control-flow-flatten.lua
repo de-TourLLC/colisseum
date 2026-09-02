@@ -2,7 +2,7 @@ local Parser = require("src.core.parser")
 local Validate = require("src.core.validate")
 local Entropy = require("src.core.entropy")
 
-local Step = { name = "control-flow-flatten", version = 1 }
+local Step = { name = "control-flow-flatten", version = 2 }
 Step.metadata = {
     id = Step.name,
     version = Step.version,
@@ -26,6 +26,18 @@ end
 -- True if `name` appears as an identifier anywhere in `text` (word-bounded).
 local function references(text, name)
     return text:find("%f[%w_]" .. name .. "%f[^%w_]") ~= nil
+end
+
+-- Encode a state transition so the target state is not a plain literal a regex can
+-- collect (`dispatch=N` -> edge sources). All three forms evaluate to exactly `value`
+-- while hiding it behind trivial arithmetic; the state graph is still recoverable
+-- by executing the chunk, but a textual scan can no longer map edges directly.
+local function encode_transition(prng, value)
+    local kind = prng:range(1, 3)
+    if kind == 1 then return tostring(value) end
+    if kind == 2 then return tostring(value) .. "+0" end
+    -- v*2 - v - (v - v) == v
+    return tostring(value * 2) .. "-" .. tostring(value) .. "-(" .. tostring(value) .. "-" .. tostring(value) .. ")"
 end
 
 function Step.apply(source, options)
@@ -121,9 +133,21 @@ function Step.apply(source, options)
             branch = branch .. (state.body or "return")
         else
             local nxt = index < #states and index + 1 or 0
-            branch = branch .. (state.body and (state.body .. " ") or "") .. dispatch .. "=" .. nxt
+            branch = branch .. (state.body and (state.body .. " ") or "") .. dispatch .. "=" .. encode_transition(prng, nxt)
         end
         parts[#parts + 1] = branch .. "\n"
+    end
+    -- Dead states: unreachable sentinel branches (the dispatcher never sets these
+    -- values) carrying harmless local declarations and empty transitions. They add
+    -- noise edges to the recovery graph and confuse naive state enumeration without
+    -- ever executing or changing the program's behavior.
+    local fake_count = prng:range(1, 2)
+    for _ = 1, fake_count do
+        local sentinel = #states + _
+        local dead = "elseif " .. dispatch .. "==" .. sentinel .. " then local " ..
+            prng:identifier(prng:range(6, 10)) .. "=" .. prng:range(0, 9999) .. " " ..
+            dispatch .. "=" .. encode_transition(prng, sentinel) .. "\n"
+        parts[#parts + 1] = dead
     end
     parts[#parts + 1] = "end\n" -- close the if/elseif chain
     parts[#parts + 1] = "end\n" -- close the while loop

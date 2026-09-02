@@ -39,7 +39,8 @@ local presets = {
         { "anti-tamper", { threshold = 3, detectExecutor = true } },
         { "minify", { } },
         { "field-index", { } },
-        { "junk-comments", { } }
+        { "junk-comments", { } },
+        { "rename", { } }
     },
     medium = {
         { "line-ending-normalize", { } },
@@ -52,7 +53,8 @@ local presets = {
         { "anti-tamper", { threshold = 4, detectExecutor = true } },
         { "minify", { } },
         { "field-index", { } },
-        { "junk-comments", { } }
+        { "junk-comments", { } },
+        { "rename", { } }
     },
     full = {
         { "line-ending-normalize", { } },
@@ -68,7 +70,8 @@ local presets = {
         { "strings", { } },
         { "anti-tamper", { threshold = 3, detectExecutor = true } },
         { "field-index", { } },
-        { "junk-comments", { } }
+        { "junk-comments", { } },
+        { "rename", { } }
     },
     total = {
         { "line-ending-normalize", { } },
@@ -93,6 +96,7 @@ local presets = {
         { "runtime-integrity", { } },
         { "field-index", { } },
         { "junk-comments", { } },
+        { "rename", { } },
         { "vm", { } }
     },
     -- Maximum client-side hardening, tuned to stay fast at runtime: every static
@@ -126,24 +130,33 @@ local presets = {
         { "runtime-integrity", { } },
         { "field-index", { } },
         { "junk-comments", { } },
+        { "rename", { } },
         { "vm", { backend = "register" } }
     },
+    -- "secure" is the recommended production preset: everything "hard" provides
+    -- plus split/constant-array pooling of string literals and a runtime
+    -- self-integrity guard -- without the heaviest VM layer. It is intentionally
+    -- strict super-set of "hard" so the two presets are not identical.
     secure = {
         { "line-ending-normalize", { } },
         { "trailing-whitespace", { } },
         { "minify", { } },
-        { "anti-deobfuscation", { maxTripwires = 4 } },
-        { "garbage-code", { max_insertions = 4 } },
-        { "table-noise", { max_insertions = 2 } },
-        { "boolean-noise", { max_replacements = 32 } },
+        { "anti-deobfuscation", { maxTripwires = 6 } },
+        { "garbage-code", { max_insertions = 6 } },
+        { "table-noise", { max_insertions = 4 } },
+        { "boolean-noise", { max_replacements = 48 } },
         { "literal-padding", { } },
         { "numbers", { } },
+        { "split-strings", { } },
         { "rename", { } },
         { "strings", { } },
+        { "constant-array", { } },
         { "anti-tamper", { threshold = 3, detectExecutor = true } },
+        { "runtime-integrity", { } },
         { "minify", { } },
         { "field-index", { } },
-        { "junk-comments", { } }
+        { "junk-comments", { } },
+        { "rename", { } }
     }
 }
 

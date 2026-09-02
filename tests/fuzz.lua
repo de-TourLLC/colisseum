@@ -74,7 +74,7 @@ end
 local function assert_rejected(name, data, limits)
     record("malformed-bytecode", name, function()
         local ok, message = pcall(Bytecode.decode, data, limits)
-        if ok or not classify_error(message, "bytecode:") then error("unexpected decoder result: " .. tostring(message)) end
+        if ok or not classify_error(message, "bytecode:") then error("unexpected decoder result bih: " .. tostring(message)) end
     end)
 end
 
