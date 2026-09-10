@@ -23,8 +23,9 @@ states what it does and does not guarantee, and what to check before shipping.
 - Heavy decode loops yield cooperatively (`task.wait`) on Roblox, so large scripts
   do not trip the execution-time watchdog. Startup cost scales with payload size;
   `Full`/`Total` produce larger output than `Easy`/`Medium`/`Hard`.
-- Runtime failures surface as branded, coded errors — see
-  [docs/ERROR_CODES.md](docs/ERROR_CODES.md).
+- Runtime failures surface as opaque, coded errors whose code does not identify the
+  check that fired — see [docs/ERROR_CODES.md](docs/ERROR_CODES.md). The register VM
+  additionally diverts silently to a decoy result on tamper rather than erroring.
 
 ## Before you ship
 

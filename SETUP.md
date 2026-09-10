@@ -20,7 +20,7 @@ lua cli.lua --preset Total --out output.lua input.lua
 ```
 
 Replace `input.lua` with your file and `output.lua` with the destination.
-Presets: `Easy` | `Medium` | `Hard` | `Full` | `Total`.
+Presets: `Easy` | `Medium` | `Hard` | `Full` | `Total` | `Fortress`.
 
 ## Obfuscate with the repo's Luau (`--secure`)
 
@@ -56,6 +56,7 @@ lua cli.lua --preset Total --batch --out out_dir file1.lua file2.lua file3.lua
 | `Hard`   | Medium plus dead-code and structural noise. |
 | `Full`   | Maximum standard protection, including payload encryption. |
 | `Total`  | Full plus extra literal-protection and control-flow layers. |
+| `Fortress` | Every static layer through the register VM (polymorphic opcodes, superoperators, keystream-masked bytecode, silent anti-hook honeypot). No `loadstring`. |
 
 ## Optional: bundle the interpreter in the repo
 

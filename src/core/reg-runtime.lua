@@ -1,21 +1,7 @@
--- Register VM interpreter. Executes a proto tree produced by reg-compiler. Uses
--- raw Lua operators for arithmetic/compare/index/concat, so semantics (coercion,
--- metamethods, errors) match reference Lua exactly. VM closures are REAL Lua
--- functions, so host code (pcall, table.sort, ipairs, metamethods) calls them
--- directly. No loadstring. Runs on Lua/LuaJIT and Luau.
---
--- In-memory hardening: the decoded program never materializes as plain Lua
--- tables. `program` is a blob { S = <build-fogged byte stream>, f = <fog>,
--- r = <numeric region index> }; every instruction and constant is decoded from
--- the byte stream on demand inside the dispatch loop, so a debug.getupvalue /
--- getinfo dump of an active interpreter frame yields an undecoded, fogged blob --
--- not a ready-to-read {code, constants, protos} tree.
---
--- An optional `anchor` (the host debug table, gethook and sethook captured at
--- bundle load) drives a stride-jittered anti-hook sampler that runs INSIDE the
--- dispatch loop: it aborts the moment a debug hook is installed post-boot or the
--- debug API functions are swapped, so a step-hook that waits for the guard to
--- pass (then sethook's a count hook to scoop upvalues) trips the VM mid-run.
+-- Register VM interpreter. Runs a proto tree (from reg-compiler) with reference-Lua
+-- semantics; VM closures are real Lua functions. No loadstring. Lua/LuaJIT + Luau.
+-- The program ships as an opaque byte blob decoded on demand; an optional `anchor`
+-- arms an anti-hook sampler. Implementation details are intentionally terse.
 
 local RegBytecode = require("src.core.reg-bytecode")
 
@@ -64,30 +50,51 @@ function Runtime.run(program, options)
     local regs = program.r
     local fog = program.f or { 0 }
     local nfog = #fog
+    -- Optional per-build opcode normalization (raw code -> canonical). Absent in
+    -- the dev path, where the raw code is already canonical.
+    local onorm = program.o
+
+    -- Honeypot drift: 0 on a clean run (results unaffected); set nonzero on tamper
+    -- detection, after which numeric arithmetic results are offset by `hp`.
+    local hp = 0
+
+    -- Per-position keystream mask, derived once at VM start (portable all-integer
+    -- math; matches the encoder in reg-bytecode.encode_opaque byte-for-byte).
+    local ks_key = 5381
+    for i = 1, nfog do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
+    local mask = {}
+    do
+        local slen = #S
+        for i = 1, slen do
+            local h = (i * 40503 + ks_key) % 4294967296
+            h = (h * 65599 + 3266489917) % 4294967296
+            h = (h + kk_floor(h / 65536)) % 4294967296
+            h = (h * 40503) % 4294967296
+            mask[i] = kk_xor(fog[(i - 1) % nfog + 1], kk_floor(h / 7) % 256)
+        end
+    end
 
     -- Raw fogged-byte reads. `S` is the build-fogged stream; every byte is
     -- un-fogged on demand, so the interpreter never holds decoded state ready.
     local function bget(i)
-        return kk_xor(S:byte(i), fog[(i - 1) % nfog + 1])
+        return kk_xor(S:byte(i), mask[i])
     end
     -- Biased little-endian i32 at offset i.
     local function vget(i)
         local a, b, c, d = S:byte(i, i + 3)
-        local j = i - 1
-        a = kk_xor(a, fog[j % nfog + 1])
-        b = kk_xor(b, fog[(j + 1) % nfog + 1])
-        c = kk_xor(c, fog[(j + 2) % nfog + 1])
-        d = kk_xor(d, fog[(j + 3) % nfog + 1])
+        a = kk_xor(a, mask[i])
+        b = kk_xor(b, mask[i + 1])
+        c = kk_xor(c, mask[i + 2])
+        d = kk_xor(d, mask[i + 3])
         return (a + b * 256 + c * 65536 + d * 16777216) - 2147483648
     end
     -- Unsigned little-endian u32 at offset i.
     local function uget(i)
         local a, b, c, d = S:byte(i, i + 3)
-        local j = i - 1
-        a = kk_xor(a, fog[j % nfog + 1])
-        b = kk_xor(b, fog[(j + 1) % nfog + 1])
-        c = kk_xor(c, fog[(j + 2) % nfog + 1])
-        d = kk_xor(d, fog[(j + 3) % nfog + 1])
+        a = kk_xor(a, mask[i])
+        b = kk_xor(b, mask[i + 1])
+        c = kk_xor(c, mask[i + 2])
+        d = kk_xor(d, mask[i + 3])
         return a + b * 256 + c * 65536 + d * 16777216
     end
     -- Length-prefixed string at offset i (rebuilt byte-by-byte from the blob).
@@ -181,17 +188,24 @@ function Runtime.run(program, options)
             if sampler and steps >= sample_at then
                 sample_at = sample_at + 512 + ((sample_at * 48271) % 1009)
                 local ad = anchor.d
-                if ad.gethook ~= anchor.g or ad.sethook ~= anchor.s then
-                    kk_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x2175", 0)
+                local tripped = (ad.gethook ~= anchor.g or ad.sethook ~= anchor.s)
+                if not tripped then
+                    local ok, hook = kk_pcall(ad.gethook)
+                    if ok and hook ~= nil then tripped = true end
                 end
-                local ok, hook = kk_pcall(ad.gethook)
-                if ok and hook ~= nil then
-                    kk_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x2175", 0)
+                if tripped then
+                    -- Divert opaquely instead of announcing detection: latch the
+                    -- honeypot drift and stop sampling (the poison is now self-
+                    -- sustaining, and re-checking would waste hot-loop time and
+                    -- re-expose the guard's timing). No branded error ships or fires.
+                    hp = 1 + (steps % 3)
+                    sampler = false
                 end
             end
             -- Decode the next instruction from the fogged byte stream on demand.
             local off = reg.d + (pc - 1) * 13
-            local op = kk_xor(S:byte(off), fog[(off - 1) % nfog + 1])
+            local op = kk_xor(S:byte(off), mask[off])
+            if onorm then op = onorm[op] end
             local a = vget(off + 1)
             local b = vget(off + 5)
             local c = vget(off + 9)
@@ -215,13 +229,13 @@ function Runtime.run(program, options)
             elseif op == OP.GETTABLE then R[a] = R[b][RK(c)]
             elseif op == OP.SETTABLE then R[a][RK(b)] = RK(c)
             elseif op == OP.SELF then local o = R[b]; R[a + 1] = o; R[a] = o[RK(c)]
-            elseif op == OP.ADD then R[a] = RK(b) + RK(c)
-            elseif op == OP.SUB then R[a] = RK(b) - RK(c)
-            elseif op == OP.MUL then R[a] = RK(b) * RK(c)
-            elseif op == OP.DIV then R[a] = RK(b) / RK(c)
-            elseif op == OP.MOD then R[a] = RK(b) % RK(c)
-            elseif op == OP.POW then R[a] = RK(b) ^ RK(c)
-            elseif op == OP.IDIV then R[a] = kk_floor(RK(b) / RK(c))
+            elseif op == OP.ADD then R[a] = RK(b) + RK(c) + hp
+            elseif op == OP.SUB then R[a] = RK(b) - RK(c) + hp
+            elseif op == OP.MUL then R[a] = RK(b) * RK(c) + hp
+            elseif op == OP.DIV then R[a] = RK(b) / RK(c) + hp
+            elseif op == OP.MOD then R[a] = RK(b) % RK(c) + hp
+            elseif op == OP.POW then R[a] = RK(b) ^ RK(c) + hp
+            elseif op == OP.IDIV then R[a] = kk_floor(RK(b) / RK(c)) + hp
             elseif op == OP.CONCAT then R[a] = RK(b) .. RK(c)
             elseif op == OP.EQ then R[a] = RK(b) == RK(c)
             elseif op == OP.NE then R[a] = RK(b) ~= RK(c)
@@ -287,6 +301,23 @@ function Runtime.run(program, options)
                 for i = 1, c do R[a + 2 + i] = rets[i] end
             elseif op == OP.TFORLOOP then
                 if R[a + 3] ~= nil then R[a + 2] = R[a + 3]; pc = pc + b end
+            -- Superoperators: run this op and the next slot's op, then skip it
+            -- (the second op's operands are read from off + 13).
+            elseif op == OP.FUSEMM then
+                R[a] = R[b]
+                local o2 = off + 13
+                R[vget(o2 + 1)] = R[vget(o2 + 5)]
+                pc = pc + 1
+            elseif op == OP.FUSELL then
+                R[a] = kget(reg, b)
+                local o2 = off + 13
+                R[vget(o2 + 1)] = kget(reg, vget(o2 + 5))
+                pc = pc + 1
+            elseif op == OP.FUSEGG then
+                R[a] = globals[kget(reg, b)]
+                local o2 = off + 13
+                R[vget(o2 + 1)] = globals[kget(reg, vget(o2 + 5))]
+                pc = pc + 1
             else
                 kk_error("invalid instruction", 0)
             end

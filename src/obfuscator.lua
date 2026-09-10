@@ -99,20 +99,8 @@ local presets = {
         { "rename", { } },
         { "vm", { } }
     },
-    -- "fortress" is the absolute-maximum preset: every hardening layer, tuned to
-    -- the highest safe budgets, applied in TWO independent waves so identifiers,
-    -- predicates, tripwires, and decoys are re-randomized from fresh per-step
-    -- seeds after the first coat is already in place (repeat passes are
-    -- intentional here -- each wave uses its own derived seed). The static
-    -- layers (control flow, opaque predicates, string encryption, renaming,
-    -- field indirection, anti-tamper + executor/timing detection) feed the
-    -- REGISTER VM backend, whose encrypted+permuted bytecode and mangled
-    -- interpreter carry the protection while running 2-6x faster than the
-    -- tree-walker, then a final minify keeps the shipped output lean
-    -- ("optimized"). A deobfuscator must strip every layer twice, then decrypt
-    -- per-build bytecode, then reverse a per-build opcode permutation over a
-    -- name-mangled interpreter -- the runtime stays cheap. Runs on Lua and
-    -- Lua/Luau-Roblox.
+    -- "fortress": maximum preset -- every static layer applied in two re-randomized
+    -- waves, feeding the register VM backend. Runs on Lua and Luau/Roblox.
     fortress = {
         { "line-ending-normalize", { } },
         { "trailing-whitespace", { } },

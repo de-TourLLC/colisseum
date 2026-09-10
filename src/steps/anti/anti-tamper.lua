@@ -1,6 +1,11 @@
 local Step = {}
 local build_counter = 0
 local Crypto = require("src.steps.security.crypto")
+-- Guard comments are stripped before emission so the shipped output never carries
+-- the guard's design commentary (in text presets `minify` runs before this step,
+-- so without this the whole template -- a roadmap for a deobfuscator -- would ship
+-- verbatim). Blanking keeps line boundaries, so the beautify detector is unaffected.
+local StripComments = require("src.steps.strip-comments")
 
 Step.name = "anti-tamper"
 Step.version = 5
@@ -49,14 +54,9 @@ local function make_guard(options, tag, token, digest)
         recheck_delay = number_option(options, "recheckDelay", 3)
     end
     local recheck_after_load = boolean_option(options, "recheckAfterLoad", true)
-    -- Prometheus-style anti-beautify: detect that the shipped output was run
-    -- through a code beautifier / pretty-printer (a common first step before
-    -- manual analysis). You cannot make valid Lua break on whitespace, so instead
-    -- the guard emits TWO `error()` probes on a SINGLE physical line and compares
-    -- the line numbers Lua reports for them (parsed from the error text -- no
-    -- `debug` needed, so it works inside the sandbox). Minified output keeps both
-    -- on one line (equal); a beautifier that puts each statement on its own line
-    -- makes them diverge. Per-build markers keep it from being a fixed signature.
+    -- Anti-beautify: emit two error() probes on ONE physical line and compare the
+    -- line numbers Lua reports (parsed from the error text, no debug). A beautifier
+    -- that splits them onto separate lines makes the numbers diverge.
     local detect_beautify = boolean_option(options, "detectBeautify", true)
     local mark_a = "b" .. tostring(tag) .. "za"
     local mark_b = "b" .. tostring(tag) .. "zb"
@@ -109,7 +109,30 @@ do
     local _at_do_stdlib = %s
     local _at_recheck_delay = (%s)
     local _at_recheck_after_load = %s
-    local _at_message = "ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x7A31"
+    -- Opaque coded errors: every trip aborts with the same branded wordmark and a
+    -- code drawn from the set below. The mapping is deliberately non-descriptive
+    -- and non-injective (several causes share a code), so a code never identifies
+    -- the check that fired.
+    local _at_prefix = "ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x"
+    local _at_codes = {
+        ["internal-integrity"] = "7A31", ["source-reformatted"] = "7A31",
+        ["debug-hook"] = "3E19", ["debug-api-replacement"] = "3E19",
+        ["executor-signature"] = "6B0C", ["executor-marker"] = "6B0C",
+        ["protected-global-replacement"] = "41D7", ["global-replacement"] = "41D7",
+        ["environment-divergence"] = "41D7",
+        ["non-native-core-functions"] = "5D33",
+        ["stdlib-function-hook"] = "2A88", ["stdlib-non-native"] = "2A88",
+        ["string-metatable-swap"] = "1F4E", ["global-metatable-interception"] = "1F4E",
+        ["loader-replacement"] = "7C56", ["timing-anomaly"] = "0D91",
+    }
+    local function _at_pick(_at_rs)
+        if _at_type(_at_rs) ~= "table" then return "7A31" end
+        for _, _at_rn in _at_ipairs(_at_rs) do
+            if _at_rn == "internal-integrity" then return "7A31" end
+        end
+        local _at_first = _at_rs[1]
+        return (_at_first and _at_codes[_at_first]) or "7A31"
+    end
 
     -- Pristine baselines captured at chunk load, BEFORE any post-load tampering.
     -- The deferred scan compares the live environment against these, so a hook
@@ -145,11 +168,9 @@ do
         if _at_ok then _at_base_meta.str = _at_mt end
     end
 
-    -- Never embed the tripwire constants as single literals: the nonce is two
-    -- concatenated string pieces and the expected digest is the sum of two
-    -- separately-embedded addends. Rewriting one visible constant breaks
-    -- reality; repairing the guard means recomputing the digest and reproducing
-    -- the exact split.
+    -- Tripwire constants are never single literals: the nonce is two concatenated
+    -- pieces and the expected digest is a sum of two addends, so patching one
+    -- visible constant breaks the check.
     local _at_nonce = %q .. %q
     local _at_expected = ((%d) + (%d))
 
@@ -366,14 +387,9 @@ do
             local _at_os = _at_rawget(_at_global, "os")
             local _at_clock = _at_type(_at_os) == "table" and _at_os.clock or nil
             if _at_type(_at_clock) == "function" then
-                -- Calibrate to THIS host's speed instead of an absolute wall-clock
-                -- bound. A fixed "> 0.5s" threshold false-positives on any
-                -- legitimately slow host (a throttled CPU, a mobile device, or an
-                -- interpreted/embedded Lua host). Time a small warmup loop, then a
-                -- loop ten times larger, and flag only a GROSS disproportion a
-                -- uniform slowdown cannot explain -- the ratio stays ~10x on an
-                -- honestly-slow host. Installed hooks (the primary threat this
-                -- approximates) are already caught by the debug-hook detector.
+                -- Calibrate to this host's speed: time a warmup loop then a 10x
+                -- loop, flagging only a gross disproportion a uniform slowdown
+                -- can't explain (avoids false positives on honestly-slow hosts).
                 local _at_c0 = _at_clock()
                 local _at_warm = 0
                 for _at_i = 1, 20000 do _at_warm = _at_warm + _at_i end
@@ -411,7 +427,7 @@ do
             elseif _at_mode_ret then
                 -- deferred: nothing to abort
             else
-                error(_at_message, 0)
+                error(_at_prefix .. _at_pick(_at_r), 0)
             end
         end
     end
@@ -427,7 +443,7 @@ do
         elseif _at_mode_ret then
             return
         else
-            error(_at_message, 0)
+            error(_at_prefix .. _at_pick(_at_r0), 0)
         end
     end
 
@@ -527,7 +543,7 @@ function Step.apply(source, options)
         nonce = tostring(salt) .. "." .. tostring(build_counter) .. "." .. tostring(os.clock())
     end
     local nonce_digest = Crypto.digest(nonce)
-    return shebang .. make_guard(options, salt, nonce, nonce_digest) .. "\n" .. source
+    return shebang .. StripComments.apply(make_guard(options, salt, nonce, nonce_digest)) .. "\n" .. source
 end
 
 setmetatable(Step, {

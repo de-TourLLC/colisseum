@@ -18,11 +18,9 @@ end
 local this = debug.getinfo(1, "S").source:sub(2)
 local core_dir = (this:match("^(.*[/\\])") or "./") .. "../../core/"
 
--- Turn Lua source into a self-contained chunk that: embeds the native VM
--- (bytecode decoder + interpreter), carries the program as ChaCha20-encrypted
--- Colisseum bytecode, decrypts it at load with pure bitwise ops (never
--- loadstring), and runs it on the VM. This is the Lua-target analogue of the
--- Fiu/ChaCha packaging -- a real bytecode VM, no source or plaintext bytecode.
+-- Package Lua source into a self-contained chunk: embeds the native VM, carries
+-- the program as ChaCha20-encrypted bytecode, decrypts with bitwise ops (no
+-- loadstring), runs it. Lua-target analogue of the Fiu/ChaCha packaging.
 function Step.apply(source, options)
     if type(source) ~= "string" then error("native-vm: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("native-vm: options must be a table") end
@@ -41,12 +39,8 @@ function Step.apply(source, options)
     local prefix = "coli_"
     for _ = 1, 6 do prefix = prefix .. string.char(97 + prng:range(0, 25)) end
 
-    -- Phase 3: per-build opcode permutation + KAT enum branding. Every build
-    -- assigns the VM's opcodes different numbers -- so no two builds share a
-    -- bytecode encoding and a generic decoder cannot assume "opcode 1 = chunk" --
-    -- and the embedded interpreter dispatches on a KAT.<NAME> numeric enum table
-    -- (lexer/VM style) instead of readable opcode strings. The opcode table and
-    -- the compiled program are remapped to match.
+    -- Per-build opcode permutation + numeric enum dispatch: every build numbers
+    -- opcodes differently and the interpreter dispatches on numbers, not names.
     local program = Bytecode.decode(Compiler.compile(source))
     local by_code, opcode_count = {}, 0
     for name, code in pairs(Bytecode.opcodes()) do
@@ -69,12 +63,8 @@ function Step.apply(source, options)
         opnum[by_code[code]] = perm[code]
     end
 
-    -- Rewrite the interpreter's opcode dispatch from readable string comparisons
-    -- (op=="chunk") to per-build KAT enum constants (op==KAT_CHUNK). These are flat
-    -- locals, so each comparison is a fast register read (a table field like
-    -- KAT.CHUNK would cost a hash lookup on every branch of the dispatch chain).
-    -- Only the op/cop dispatch variables and the method-receiver `.opcode` check
-    -- are rebranded; type guards such as type(x)=="string" are left untouched.
+    -- Rewrite the opcode dispatch from string compares (op=="chunk") to per-build
+    -- numeric enum locals (op==KAT_CHUNK); type guards are left untouched.
     local function katify(src)
         src = src:gsub("names%[instructions%[id%]%.opcode%]", "instructions[id].opcode")
         src = src:gsub("names%[instructions%[cid%]%.opcode%]", "instructions[cid].opcode")
@@ -102,11 +92,8 @@ function Step.apply(source, options)
     -- ChaCha20 decryptor expression -> plaintext bytecode string at runtime.
     local sealed = Package.seal(bytecode, seed, prefix .. "s")
 
-    -- Embed the VM with its opcode table reordered to the per-build permutation
-    -- and its dispatch rebranded to the KAT enum, then strip comments/whitespace
-    -- so nothing readable survives and it is smaller. The bytecode module is also
-    -- name-mangled and its opcode-name strings encrypted (exactly like the
-    -- register backend), so the kind list no longer ships as readable plain text.
+    -- Embed the permuted+rebranded VM, then strip comments/whitespace; the bytecode
+    -- module is name-mangled and its opcode-name strings encrypted too.
     local kinds_literal = "{\"" .. table.concat(permuted_kinds, "\",\"") .. "\"}"
     local bytecode_raw = read(core_dir .. "bytecode.lua"):gsub("local kinds = %b{}", "local kinds = " .. kinds_literal, 1)
     local Rename = require("src.steps.naming.rename")

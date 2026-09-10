@@ -54,10 +54,8 @@ function Step.apply(source, options)
     -- We defer the pop until the condition expression has provably ended.
     local repeat_condition = false
     local repeat_depth = 0
-    -- `local x = <init>`: the just-declared names are NOT in scope inside their own
-    -- initializer (Lua evaluates the RHS in the enclosing scope). Track them so a
-    -- self-reference like `local print = print` resolves the RHS to the outer/global
-    -- binding instead of renaming it to the new (still-nil) local.
+    -- `local x = <init>`: names aren't in scope in their own initializer, so
+    -- `local print = print` must resolve the RHS to the outer/global binding.
     local in_local_rhs = false
     local is_local_decl = false
     local local_pending = {}
@@ -109,12 +107,8 @@ function Step.apply(source, options)
         local value = token.value
         local before = previous(index)
         local after = next_token(index)
-        -- While inside a repeat condition expression, first decide whether the
-        -- expression has ended. If it has (statement/block keyword at depth 0, an
-        -- operand-starting token following an operand-ending token, or the end of
-        -- the stream), pop the repeat scope now -- before the current token is
-        -- processed -- so references in the condition resolve to the repeat body's
-        -- locals, and the code that follows sees the enclosing scope.
+        -- Inside a repeat condition: once the expression ends, pop the repeat scope
+        -- so the condition sees the body's locals and following code doesn't.
         if repeat_condition then
             if value == "(" or value == "[" or value == "{" then
                 repeat_depth = repeat_depth + 1
@@ -166,10 +160,8 @@ function Step.apply(source, options)
                 function_header = true
             elseif declaring or for_declaration then
                 if not field then
-                    -- A name this `local` introduces for the FIRST time in this scope
-                    -- must not resolve to itself inside its own initializer (it is nil
-                    -- there). A name it merely re-declares/shadows keeps resolving to
-                    -- the prior binding, so only newly-created names get the guard.
+                    -- Only newly-introduced names get the self-reference guard; a
+                    -- re-declared/shadowed name keeps resolving to the prior binding.
                     local newly = is_local_decl and current.bindings[value] == nil
                     local binding = declaration(current, value, generator, declarations)
                     declarations[token.start] = binding

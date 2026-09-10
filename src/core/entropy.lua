@@ -1,15 +1,5 @@
--- Per-run entropy and a small deterministic PRNG.
---
--- Two goals, satisfied by one module:
---   * Every build is different. Entropy.collect() gathers real run-to-run
---     variation (wall clock, CPU clock, fresh heap/function addresses under
---     ASLR, and a process-monotonic counter) so no two obfuscations share the
---     same seeds, keys, names, or injected values -- even for identical input.
---   * Builds stay reproducible on demand. Given an explicit numeric seed the
---     PRNG replays exactly, so callers who *want* a stable build can ask for one.
---
--- The PRNG is MINSTD (Lehmer), pure integer arithmetic: no bit library, works
--- on Lua 5.1-5.4, LuaJIT, and Luau alike.
+-- Per-run entropy + a small deterministic PRNG (MINSTD/Lehmer, pure integer,
+-- portable). collect() varies every build; an explicit seed replays exactly.
 
 local Entropy = {}
 

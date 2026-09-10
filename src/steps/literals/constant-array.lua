@@ -6,11 +6,9 @@ local Step = {}
 Step.name = "constant-array"
 Step.version = 1
 
--- Pools string literals into a single
--- shuffled, keyed-encoded array and replaces each occurrence with an indexed
--- lookup, so no literal appears in place and their order is scrambled. Native
--- token-level implementation; the shuffle is baked into the emitted indices so
--- there is no runtime un-shuffle cost.
+-- Pools string literals into one shuffled, keyed-encoded array and replaces each
+-- occurrence with an indexed lookup (order scrambled; shuffle baked into indices,
+-- so no runtime un-shuffle cost).
 local MASK_MULT, MASK_INC, MASK_MOD = 1103515245, 12345, 2147483648
 
 local function encode_bytes(value, seed)

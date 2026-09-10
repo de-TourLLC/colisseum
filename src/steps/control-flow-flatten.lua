@@ -28,10 +28,8 @@ local function references(text, name)
     return text:find("%f[%w_]" .. name .. "%f[^%w_]") ~= nil
 end
 
--- Encode a state transition so the target state is not a plain literal a regex can
--- collect (`dispatch=N` -> edge sources). All three forms evaluate to exactly `value`
--- while hiding it behind trivial arithmetic; the state graph is still recoverable
--- by executing the chunk, but a textual scan can no longer map edges directly.
+-- Encode a state transition so the target isn't a plain literal a regex can
+-- collect; all forms evaluate to exactly `value` behind trivial arithmetic.
 local function encode_transition(prng, value)
     local kind = prng:range(1, 3)
     if kind == 1 then return tostring(value) end
@@ -72,10 +70,8 @@ function Step.apply(source, options)
     for index, statement in ipairs(statements) do
         local text = body:sub(statement.start, statement.finish)
         local kind = statement.kind
-        -- The parser does not always bound statements that contain function
-        -- expressions tightly (it can split `local f = function() ... end`). Verify
-        -- each extracted statement compiles on its own with the real Lua parser; if
-        -- any fragment does not, the boundaries are unsafe, so leave source as-is.
+        -- Verify each extracted statement compiles on its own; if any fragment
+        -- does not, the boundaries are unsafe, so leave source as-is.
         local valid = Validate.syntax(text)
         if not valid then return source end
         if kind == "return" then

@@ -1,26 +1,63 @@
 # Colisseum Runtime Error Codes
 
 Obfuscated output never reports failures in plain text. When a protection guard
-fires at runtime, it raises a branded, deliberately opaque message:
+fires at runtime, it aborts with a branded, deliberately opaque message:
 
 ```
 ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: <CODE>
 ```
 
-The code reveals nothing to a reverse engineer. Look it up here to understand
-what happened.
+## The code is intentionally uninformative
 
-| Code     | Guard              | Meaning |
-| -------- | ------------------ | ------- |
-| `0x7A31` | anti-tamper        | The runtime environment failed the tamper/executor checks: a debug hook, replaced core globals, executor/injector signatures or markers, an abnormal `_G` metatable, environment divergence, or a timing anomaly pushed the suspicion score past the threshold. |
-| `0x5C08` | runtime-integrity  | A core function (`type`, `pcall`, `error`, `tostring`) was replaced, a debug hook was installed, or the embedded self-consistency nonce did not hash to its expected value. |
-| `0x3E9D` | crypto integrity   | The decrypted payload did not match its checksum — the encrypted array was corrupted or tampered with. |
-| `0x3E9E` | crypto load        | The decrypted chunk did not compile — corruption, or an incompatible runtime/dialect. |
-| `0x2B14` | vm load            | The keystream-decoded chunk did not compile — corruption, or an incompatible runtime/dialect. |
+The `<CODE>` does **not** identify which check fired or what was detected. This is
+by design, and it is stronger than "the code is just opaque to outsiders":
 
-Notes:
-- A `0x7A31` or `0x5C08` almost always means the script was moved into an
-  executor / injector or is being debugged. In the intended runtime these guards
-  score zero and never fire.
-- A `0x3E9D` / `0x3E9E` / `0x2B14` means the protected bytes were altered after
-  the build, or the output is being run on a runtime it was not built for.
+- **The mapping is not descriptive.** Every code below means the same thing at the
+  level anyone outside the project can act on: *a protection or integrity guard
+  refused to continue.* Nothing in a code names the debug/executor/global/metatable/
+  timing/nonce/hash/loader check behind it.
+- **The mapping is not injective.** Several unrelated checks deliberately share one
+  code, and one logical failure can surface under more than one code depending on
+  which guard observed it first. So you cannot invert a code back to a cause even by
+  collecting many samples.
+- **The set is not stable across the whole surface.** Which code a given tampering
+  attempt produces can depend on ordering and on the build. Two builds, or two
+  environments, can answer the same probe with different codes.
+
+The practical consequence: reading this page tells you *that* the program detected a
+hostile or unsupported environment and stopped — never the internal reason. Turning a
+code into the specific check requires deep familiarity with the engine internals; the
+documentation intentionally does not provide that bridge.
+
+## Known codes
+
+All of the following are the same class of event — a guard tripped. They are listed
+only so a legitimate user who hits one in a normal environment knows it is a Colisseum
+protection abort (and can rebuild or report the code), not a bug in their own script.
+
+| Code     | Class |
+| -------- | ----------------------------- |
+| `0x7A31` | Protection / integrity guard  |
+| `0x5C08` | Protection / integrity guard  |
+| `0x3E19` | Protection / integrity guard  |
+| `0x6B0C` | Protection / integrity guard  |
+| `0x41D7` | Protection / integrity guard  |
+| `0x5D33` | Protection / integrity guard  |
+| `0x2A88` | Protection / integrity guard  |
+| `0x1F4E` | Protection / integrity guard  |
+| `0x7C56` | Protection / integrity guard  |
+| `0x0D91` | Protection / integrity guard  |
+| `0x3E9D` | Payload / build integrity     |
+
+The list is not exhaustive and may grow between builds.
+
+## What to do if you see one
+
+- **In the intended runtime** (a normal Roblox script / a plain Lua/Luau host, no
+  debugger, no executor/injector, unmodified output): these guards score zero and
+  never fire. If one fires anyway, the output is likely running on a runtime it was
+  not built for, or the file was altered after the build — rebuild it and, if it
+  persists, report the exact code.
+- **Under a debugger, an executor/injector, or with the output edited by hand:** the
+  abort is expected. That is the guard doing its job. No code-specific action exists
+  or is intended.

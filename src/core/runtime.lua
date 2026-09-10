@@ -138,10 +138,8 @@ function Runtime.run(program, options)
     -- options.environment. The step/loop/depth limits still bound execution.
     local globals = (options and options.environment) or _G
     local steps, depth, loop_iterations = 0, 0, 0
-    -- Anti-hook sampler (armed when the bundle passes an anchor = the host debug
-    -- table + gethook/sethook captured at load). Stride-jittered so an attacker
-    -- cannot time around a fixed sampling interval; aborts the moment a hook is
-    -- installed post-boot or the debug API is swapped.
+    -- Anti-hook sampler (armed when the bundle passes an anchor). Stride-jittered;
+    -- aborts if a hook is installed post-boot or the debug API is swapped.
     local anchor = (options and options.anchor) or nil
     local sampler = anchor ~= nil and type(anchor) == "table" and type(anchor.d) == "table"
         and type(anchor.d.gethook) == "function"
@@ -221,9 +219,8 @@ function Runtime.run(program, options)
             local parameters={}; for n=1,parameter_count do local p=v[3+n]; if type(p)~="string" then fail("invalid parameter") end; parameters[n]=p end
             local body_count=v[4+parameter_count]; if type(body_count)~="number" or body_count<0 or body_count~=#v-(4+parameter_count) then fail("invalid function body layout") end
             local body={}; for n=1,body_count do body[n]=reference(v[4+parameter_count+n],id,4+parameter_count+n) end
-            -- A VM closure is a REAL Lua function that runs the body on the VM. This
-            -- lets native code (pcall, table.sort, metamethods, callbacks) call it
-            -- directly, and unifies calling with native functions.
+            -- A VM closure is a real Lua function, so native code (pcall, sort,
+            -- metamethods) can call it directly.
             local closure_env=environment
             result=function(...)
                 local nargs=select("#",...); local args={...}

@@ -114,11 +114,8 @@ local function read(path)
     return value
 end
 
--- Per-build marker prefix so the emitted loader carries no fixed identifiers a
--- generic deobfuscator could scan for (no constant __fiu / _j / __bytecode).
--- Derivation is deterministic once a seed is known (reproducible builds); with
--- no explicit seed the passed seed already carries fresh entropy, so no extra
--- clock mixing is needed here either.
+-- Per-build marker prefix so the loader carries no fixed scannable identifiers.
+-- Deterministic once the seed is known (reproducible builds).
 local function marker_prefix(seed)
     local state = digest("names", digest(tostring(seed)))
     local prefix = "coli_"
@@ -140,11 +137,9 @@ local function mangle(code, underscores, prefix)
     return code
 end
 
--- Encrypt `data` (the Luau bytecode) and return a Lua expression that reconstructs
--- and RETURNS the plaintext bytecode string at runtime. Two chained ciphers
--- (ChaCha20 under a masked key, then an offset keystream), an integrity checksum,
--- and hidden ChaCha constants -- decrypted purely with bitwise ops, never with
--- loadstring. The result is handed straight to Fiu's luau_load.
+-- Encrypt `data` (Luau bytecode) and return a Lua expression that reconstructs the
+-- plaintext at runtime: two chained ciphers + an integrity checksum, decrypted with
+-- bitwise ops (no loadstring). The result is handed to Fiu's luau_load.
 local function seal(data, seed, prefix)
     local key = random_key(data, seed)
     local payload = chacha(data, key)
@@ -224,11 +219,8 @@ function Package.build(bytecode, fiu_source, options)
     local seed = Entropy.normalize(options.seed) or Entropy.collect()
     local prefix = marker_prefix(seed)
     local environment_expr = require("src.steps.security.environment").expression()
-    -- Obfuscate the embedded Fiu VM so it does not ship as readable source: strip
-    -- its comments and formatting. Done before the bytecode and markers are spliced
-    -- in. Token-based minification is Luau-safe; scope renaming is NOT applied here
-    -- because the native renamer corrupts Luau constructs in the VM. Guarded so a
-    -- transform failure never breaks the build -- it just ships readable source.
+    -- Minify the embedded Fiu VM (strip comments/formatting) before splicing. No
+    -- scope renaming (it corrupts Luau); guarded so a failure just ships readable.
     if options.obfuscate_backend ~= false then
         local ok_min, minified = pcall(function() return require("src.steps.minify").apply(fiu_source) end)
         if ok_min and type(minified) == "string" and #minified > 0 then fiu_source = minified end

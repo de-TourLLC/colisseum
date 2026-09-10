@@ -32,18 +32,27 @@ Colisseum is under active development. Its not finished yet lolz
   and literal rewriting, string pooling / splitting / encryption, dead-code, decoy
   functions, opaque predicates, control-flow flattening, structural noise, runtime
   integrity and anti-tamper checks, and layered payload encryption.
+- **Register VM backend** | the `Fortress` (and `Secure`) path compiles the script
+  to an embedded, per-build-unique register VM with a name-mangled interpreter and
+  no `loadstring`. Its bytecode is masked by a continuous position-keyed keystream
+  (no repeating-XOR to peel), its opcodes are **polymorphic** — each operation has
+  several interchangeable codes, so the instruction stream never maps 1:1 to a known
+  VM — and adjacent operations are fused into **superoperators**. Encoding, opcode
+  set, and layout all differ on every build.
 - **Runtime-safe** | heavy decode loops yield cooperatively, so large scripts do
   not trip the Roblox execution-time watchdog ("exhausted allowed execution time").
 - **Tamper aware** | the output detects debug hooks, replaced globals, and
-  executor / injector environments, and fails with a branded, coded error
-  (see [docs/ERROR_CODES.md](docs/ERROR_CODES.md)).
+  executor / injector environments. The first-line guards abort with an opaque,
+  coded error whose code does not identify the check that fired
+  (see [docs/ERROR_CODES.md](docs/ERROR_CODES.md)); the register VM instead diverts
+  silently to a decoy result rather than announcing the detection.
 - **Verified output** | every build is re-validated to remain syntactically
   correct and runnable.
 
 ## Usage
 
 ```
-lua cli.lua --preset <Easy|Medium|Hard|Full|Total> --out output.lua input.lua
+lua cli.lua --preset <Easy|Medium|Hard|Full|Total|Fortress> --out output.lua input.lua
 ```
 
 Many files at once (`--out` is a directory):
@@ -71,10 +80,13 @@ See [SETUP.md](SETUP.md) for full setup and usage.
 | `Hard`   | Medium, with added dead-code, decoy functions, opaque predicates, and structural noise. |
 | `Full`   | Maximum standard protection, including layered payload encryption and a runtime wrapper. |
 | `Total`  | Full, with control-flow flattening, string pooling / splitting, and extra protection layers. |
+| `Fortress` | Every static layer, applied in two re-randomized waves, feeding the register VM backend (polymorphic opcodes, superoperators, keystream-masked bytecode, silent anti-hook honeypot). Runs on Lua and Luau/Roblox with no `loadstring`. |
 | `Secure` | Full-level protection packaged to Luau bytecode via the bundled toolchain (`--secure`). |
 
 Heavier presets trade size and startup for protection: `Easy`/`Medium`/`Hard`
-stay compact, while `Full`/`Total` produce larger output with layered encryption.
+stay compact, while `Full`/`Total` produce larger output with layered encryption,
+and `Fortress` runs everything through the register VM for the strongest hardening.
+See [OBFUSCATE.md](OBFUSCATE.md) for the `Fortress` walkthrough.
 
 ## Requirements
 

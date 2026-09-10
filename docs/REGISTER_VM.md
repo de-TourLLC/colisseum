@@ -66,6 +66,31 @@ reference Lua. It may be run with `luajit tests/reg_vm_differential.lua`.
 3. A microbenchmark shows the register VM beating the tree-walker on
    `fib`, a tight numeric loop, and table building (in-process, min-of-N).
 
-Integration into the obfuscation pipeline (ChaCha seal, per-build opcode
-permutation + KAT enum, the `reg-vm` security step, and the CLI `--backend`
-option) is done AFTER the core lands and is NOT part of the core agent's task.
+Integration into the obfuscation pipeline (the `reg-vm` security step and the CLI
+`--backend` option) is done AFTER the core lands and is NOT part of the core
+agent's task.
+
+## Per-build hardening (implemented)
+
+The `register-vm` bundler applies these on top of the core VM. All are per-build
+and preserve exact semantics (validated by `tests/reg_vm_differential.lua`,
+`tests/reg_vm_superop_differential.lua`, and the full suite):
+
+- **Keystream-masked opaque bytecode.** The program ships as one fogged byte
+  stream decoded on demand. The mask is a per-position keystream (repeating fog
+  byte XOR a per-offset hash), so it has no short period a repeating-XOR pass
+  could peel. It is derived once at VM start; the hot loop only does a lookup.
+- **Polymorphic opcodes.** Beyond permuting opcode numbers, each operation gets
+  several interchangeable raw codes chosen at random per instruction; a per-build
+  normalization table (`program.o`) folds them back. The emitted stream carries no
+  1:1 opcode mapping, breaking opcode-frequency analysis and naive
+  devirtualization.
+- **Superoperators.** A peephole (`RegBytecode.fuse`) fuses adjacent straight-line
+  pairs into single fused opcodes; the second slot is kept as a jump-target
+  fallback, so no jump-offset rewriting or target analysis is needed.
+- **Silent anti-hook honeypot.** When the in-loop sampler detects a debug hook, it
+  does not throw a branded error; it latches a drift so arithmetic results become
+  wrong. A clean run is bit-for-bit unaffected.
+
+The interpreter stays backward-compatible: the dev path (`reg-vm.lua`) sets none
+of these, so decoding is unchanged and the differential corpus still passes.

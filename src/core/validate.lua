@@ -2,17 +2,9 @@ local Lexer = require("src.core.lexer")
 
 local Validate = {}
 
--- Lightweight structural validation over a scanned token stream:
---   1. Balanced (), [], {} brackets (original behavior).
---   2. Balanced block structure: `if`/`while`/`for`/`function`/`repeat`/`do`
---      open a block and must be closed by a matching `end`/`until`. `elseif` and
---      `else` only transition between branches of an open `if`; the single
---      trailing `end` closes all of its branches. This rejects an `if` without a
---      `then`, a stray `end`, a mismatched `until`, or any other unbalanced block
---      that a broken transformation step could otherwise ship past a bracket-only
---      check.
--- This is intentionally not a full parser (no expression proof), but it is safe
--- for both the Lua and Luau token sets the obfuscator emits.
+-- Lightweight structural validation over a token stream: balanced brackets and
+-- balanced block structure (if/while/for/function/repeat/do ... end/until). Not a
+-- full parser, but safe for the Lua and Luau token sets the obfuscator emits.
 function Validate.syntax(source)
     local stack = {}
     local pairs = { [")"] = "(", ["]"] = "[", ["}"] = "{" }

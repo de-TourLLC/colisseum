@@ -45,6 +45,11 @@ local names = {
     "FORLOOP",    -- a,b     numeric-for step/test; if continuing R[a+3]=index, pc+=b
     "TFORCALL",   -- a,c     generic-for: call R[a] with R[a+1],R[a+2]; c results at R[a+3..]
     "TFORLOOP",   -- a,b     if R[a+3]~=nil then R[a+2]=R[a+3]; pc+=b
+    -- Superoperators (see RegBytecode.fuse): each fuses an adjacent straight-line
+    -- pair into one opcode. Extend the opcode set, so they permute/alias normally.
+    "FUSEMM",     -- MOVE;MOVE
+    "FUSELL",     -- LOADK;LOADK
+    "FUSEGG",     -- GETGLOBAL;GETGLOBAL
 }
 
 local by_name, by_code = {}, {}
@@ -58,6 +63,32 @@ function RegBytecode.opcodes()
     local result = {}
     for name, code in pairs(by_name) do result[name] = code end
     return result
+end
+
+-- Superoperator peephole: rewrites the first slot of an adjacent straight-line
+-- pair to a fused opcode (second slot kept as jump-target fallback). `enabled`
+-- gates each pair kind (MM/LL/GG); nil = all. Mutates the proto tree in place.
+local FUSE = {
+    [by_name.MOVE]      = { [by_name.MOVE]      = { op = by_name.FUSEMM, k = "MM" } },
+    [by_name.LOADK]     = { [by_name.LOADK]     = { op = by_name.FUSELL, k = "LL" } },
+    [by_name.GETGLOBAL] = { [by_name.GETGLOBAL] = { op = by_name.FUSEGG, k = "GG" } },
+}
+function RegBytecode.fuse(proto, enabled)
+    local code = proto.code
+    local n = #code
+    local i = 1
+    while i < n do
+        local row = FUSE[code[i][1]]
+        local pair = row and row[code[i + 1][1]]
+        if pair and (enabled == nil or enabled[pair.k]) then
+            code[i][1] = pair.op
+            i = i + 2               -- keep code[i+1] as-is; do not start a fusion on it
+        else
+            i = i + 1
+        end
+    end
+    for _, child in ipairs(proto.protos) do RegBytecode.fuse(child, enabled) end
+    return proto
 end
 
 -- Encode a constant operand as a negative RK reference (registers are >= 0, so a
@@ -240,12 +271,22 @@ function RegBytecode.encode_opaque(mainproto, fog)
     end
 
     local raw = concat(buf)
-    -- Build-fog the whole byte stream so the decrypted in-memory blob is not a
-    -- byte-for-byte image of the serialized format (the interpreter un-fogs each
-    -- byte on demand).
-    local out_b, nf = {}, #fog
+    -- Mask the byte stream with a per-position keystream (repeating fog byte XOR a
+    -- per-offset hash) keyed off the fog seed. Portable all-integer math; the
+    -- reg-runtime decoder mirrors this byte-for-byte.
+    local nf = #fog
+    local ks_key = 5381
+    for i = 1, nf do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
+    local function ks_mask(i)
+        local h = (i * 40503 + ks_key) % 4294967296
+        h = (h * 65599 + 3266489917) % 4294967296
+        h = (h + floor(h / 65536)) % 4294967296
+        h = (h * 40503) % 4294967296
+        return bxor(fog[(i - 1) % nf + 1], floor(h / 7) % 256)
+    end
+    local out_b = {}
     for i = 1, #raw do
-        out_b[i] = char(bxor(byte(raw, i), fog[(i - 1) % nf + 1]))
+        out_b[i] = char(bxor(byte(raw, i), ks_mask(i)))
     end
     raw = concat(out_b)
     return raw, out

@@ -49,24 +49,15 @@ function Safe.same_line(value)
     return not value:find("[\r\n]")
 end
 
--- Collect every safe top-level (depth 0) statement boundary in `body`: the very
--- start plus each position right after a `;` or `end`. Splicing a whole statement
--- in at one of these can never corrupt the program.
---
--- Note: `until` is deliberately NOT treated as a boundary marker. Unlike `;`/`end`,
--- a statement does not end at `until` -- the keyword is followed by the repeat
--- loop's condition EXPRESSION, so inserting a statement right after `until` yields
--- `until <stmt> <condition>`, which is invalid. `until` still drives depth (below)
--- so boundaries inside a repeat body are correctly suppressed.
+-- Collect safe top-level statement boundaries in `body` (start, and after each `;`
+-- or `end`). `until` is NOT a boundary (its condition expression follows) but still
+-- drives depth so boundaries inside a repeat body are suppressed.
 local function statement_boundaries(body)
     local tokens = Lexer.scan(body)
     local points = { 1 }
-    -- One combined nesting counter: block keywords AND brackets both raise it, so
-    -- a position is only a real top-level statement boundary when the counter is 0
-    -- (outside every block, table constructor, call-arg list, and index). Without
-    -- the bracket half, an `end` closing a `function` INSIDE a `{...}` table or a
-    -- `(...)` call would look like a boundary and splicing there would corrupt the
-    -- literal (e.g. `{ __index = function() ... end <stmt> }`).
+    -- One combined nesting counter (block keywords AND brackets): a position is a
+    -- top-level boundary only when it is 0, so an `end` inside a `{...}`/`(...)` is
+    -- not mistaken for one.
     local depth = 0
     for index, token in ipairs(tokens) do
         local prev = tokens[index - 1]

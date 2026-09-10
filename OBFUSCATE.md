@@ -47,10 +47,15 @@ deobfuscator has to peel everything off:
 - Triple string encryption (authenticated + byte-encoding + encrypted) and
   constant arrays / split strings / field indirection
 - Scope renaming (`itzCool_...`)
-- Anti-tamper with executor + timing detection, runtime integrity
-- **Register VM backend**: ChaCha20-encrypted bytecode, per-build opcode
-  permutation, a name-mangled interpreter, `_KAT`-free `coli_` markers, and
-  **no `loadstring`**
+- Anti-tamper with executor + timing detection, runtime integrity, and a silent
+  anti-hook **honeypot** in the VM: on tampering it diverts to a decoy result
+  instead of a visible error, so an attacker who bypassed the first-line checks
+  sees plausible-but-wrong output with no tell
+- **Register VM backend**: opaque bytecode masked by a continuous position-keyed
+  keystream (no repeating-XOR to peel), **per-build polymorphic opcodes** (each
+  operation has several interchangeable codes, so the stream never maps 1:1 to a
+  known VM), **superoperators** (adjacent operations fused into single opcodes), a
+  name-mangled interpreter, `coli_` markers, and **no `loadstring`**
 - Cooperative auto-yield (`task.wait`) so heavy loops do not trip Roblox's
   execution-time limit
 - Output collapsed to a **single line**, and **every build is different**

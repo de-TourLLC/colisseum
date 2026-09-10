@@ -1,37 +1,43 @@
 # Colisseum Update Log
 
-Date: 2026-09-01
+Date: 2026-09-10
 
-## Post-VM Noise Round For The Register VM
+## Register VM Hardening + Opaque Errors + Comment Hygiene
 
-Added a second, final layer of semantic junk ON TOP OF the sealed/encrypted register
-VM output (the `fortress` preset / `--backend register`), so a deobfuscator that has
-already unwound the VM is confronted with a fresh pile of meaningless statements that
-assemble into nothing. Works purely by string injection at the top-level statement
-boundaries of the finished bundle -- it never re-lexes the (large) encrypted payload
-and never touches the compiler, decoder, interpreter, ChaCha seal, or guard ICONs.
+A round of register-VM hardening (all per-build, semantics-preserving) plus a fix
+for design commentary leaking into shipped output.
 
 Changes:
-- `src/steps/security/register-vm.lua` now drains its own `|postvm` sub-seed
-  (deterministic under an explicit build seed, divergent otherwise) and prepends a
-  noise prologue before the `local B/R/C/P/E/V` loader chain:
-  - 2-4 decoy functions that fold meaningless arithmetic (`... %9973`) and are
-    never called.
-  - 2-4 opaque always-false predicates (`a==b and N==N+k then return ... end`)
-    guarding dead blocks; the guarded `return` is unreachable so execution always
-    flows through to the real VM loader.
-  - 1-2 "fake stages" that fold plain constants and final-discard the result
-    (`sink = sink * 0`).
-- Every injected identifier keeps the `coli_*` scheme, and the correctness-critical
-  tail (`return V[1],V[2],V[3],V[4]`) is left byte-identical, so emitted programs run
-  and return exactly the VM results.
-- Only constructs the tree-walking register VM supports are emitted (locals, local
-  function, numeric for, if/then/return/end, and/or/==/~=, + - * %, numeric
-  literals, [] indexing); no bitwise ops and no builtins on the critical path.
-- `tests/security.lua` gained the `package.path` bootstrap (via `debug.getinfo`) so
-  it runs standalone, matching the other suites.
+- **Keystream-masked bytecode** (`src/core/reg-bytecode.lua`, `reg-runtime.lua`):
+  the in-memory fog is no longer a short repeating-XOR key. Each byte is masked
+  with a per-position keystream (repeating fog byte XOR a per-offset hash), keyed
+  off the fog seed, so there is no small period to peel. Derived once at VM start;
+  the hot loop only does a table lookup. Portable all-integer math, byte-for-byte
+  round-trip.
+- **Polymorphic opcodes** (`reg-runtime.lua`, `src/steps/security/register-vm.lua`):
+  each operation gets several interchangeable raw codes chosen per instruction,
+  folded back by a per-build normalization table (`program.o`). The emitted stream
+  has no 1:1 opcode mapping. Backward-compatible (dev path sets no `program.o`).
+- **Superoperators** (`reg-bytecode.lua` `fuse` + `reg-runtime.lua` handlers +
+  `register-vm.lua` wiring): a peephole fuses adjacent straight-line pairs
+  (MOVE;MOVE, LOADK;LOADK, GETGLOBAL;GETGLOBAL) into single opcodes; the second
+  slot is kept as a jump-target fallback, so no jump-offset rewriting is needed.
+  New acceptance test `tests/reg_vm_superop_differential.lua` (13/13).
+- **Silent anti-hook honeypot** (`reg-runtime.lua`): the in-loop sampler no longer
+  throws the branded `0x2175` fingerprint; on tamper it latches a drift so
+  arithmetic results become wrong. Clean runs are bit-for-bit unaffected.
+- **Opaque coded errors** (`src/steps/anti/anti-tamper.lua`, `runtime-integrity.lua`,
+  `docs/ERROR_CODES.md`): anti-tamper now selects among 9 codes by cause and
+  runtime-integrity among 3, non-injectively (several causes share a code). The
+  tested `0x7A31`/`0x5C08` codes are preserved. `ERROR_CODES.md` rewritten to be
+  deliberately non-descriptive.
+- **Guard comment stripping**: `anti-tamper` and `runtime-integrity` now strip
+  their guard's comments before emission (blanking preserves line boundaries, so
+  the beautify detector is unaffected). Previously, in text presets where `minify`
+  runs before the guard, the entire commented template shipped verbatim. Repo
+  comments across the tree were also trimmed to short headers + small notes.
 
-Verified: full suite green -- security 254/254 (incl. "fortress bundle executes on
-the register VM and returns 42", seeded reproducibility, per-build divergence),
-run 8/8, adversarial 7/7, differential 6/6, reg_vm_differential 60/60, fuzz 365/365.
-No loadstring, no plaintext fragments leaked, single `coli_*` identifier family.
+Verified: full suite green -- reg_vm_differential 60/60, reg_vm_superop_differential
+13/13, run 9/9, differential 6/6, vm_coverage 29/29, adversarial 7/7, security
+254/254, fuzz 365/365. All 7 presets produce output identical to reference on the
+local Luau build, with no `load`/`loadstring` invocation.

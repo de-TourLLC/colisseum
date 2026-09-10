@@ -8,12 +8,9 @@ Step.version = 1
 -- the result stays valid and never needs re-lexing.
 Step.emits_valid = true
 
--- Inspired by Luraph's junk-comment noise: sprinkle short block comments filled
--- with random non-ASCII glyphs between tokens. They are pure whitespace to the
--- parser but wreck pattern-based deobfuscators and beautifiers. Improvements over
--- the reference: bounded by a byte budget, seed-driven (unique per build), and
--- guaranteed never to contain `]]` or a newline (so it cannot close its own
--- comment or break single-line output).
+-- Sprinkle short block comments of random non-ASCII glyphs between tokens: pure
+-- whitespace to the parser, but they wreck pattern-based deobfuscators. Byte-
+-- budgeted, seed-driven, and never contain `]]` or a newline.
 
 -- Codepoint ranges that render as dense "garbage": CJK, arrows, box-drawing,
 -- misc symbols, katakana. All are well above 0x5D, so none is a ']' or newline.

@@ -27,12 +27,9 @@ local function check_source(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
 
--- Unreachable wrappers. Varying the guard keeps the injected noise from carrying
--- a single recognisable signature across builds. The literal-false forms are
--- joined by several runtime-always-false guards (`n*0 ~= 0`, `x ~= x`, an ordered
--- pair contradiction) so the block is not always a grep-able `if false then`.
--- Every wrapped body is a harmless local assignment, so even a guard that somehow
--- evaluated true could not change observable behaviour.
+-- Unreachable wrappers with varied always-false guards (`n*0 ~= 0`, `x ~= x`, an
+-- ordered-pair contradiction) so they aren't a grep-able `if false then`. Bodies
+-- are harmless local assignments, so a guard evaluating true still changes nothing.
 local guards = {
     function(body) return "if false then " .. body .. " end" end,
     function(body) return "while false do " .. body .. " end" end,

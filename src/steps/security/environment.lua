@@ -1,17 +1,6 @@
--- Sandboxed VM environment + anti-hook anchor generators.
---
--- Both VM backends (register, native) hand the interpreter a `program.environment`
--- table instead of the real globals. The VM's own code always resolves identifiers
--- through that table, so `debug`, `load*`, `getfenv/setfenv` are simply absent:
--- payload code that tries `debug.gethook`, `pcall(debug.gethook)` or
--- `getfenv(2)` reads nil -- the audit's "hook spy / env escape" vectors die at
--- the source, before any hook gets a chance to fire.
---
--- The expression builders return Lua source SNAPSHOTS (strings) that the backends
--- splice into their bundles verbatim. `expression()` yields the sandbox table;
--- `anchor()` yields `{ d = <host debug table>, g = <gethook>, s = <sethook> }`
--- captured from the HOST chunk scope (so a later `debug = {}` rebinding or
--- gethook/sethook swap is detected by the interpreter's sampler by identity).
+-- Sandboxed VM environment + anti-hook anchor generators. `expression()` returns
+-- a sandbox-table source snapshot (debug/load*/getfenv absent); `anchor()` returns
+-- a host debug snapshot for the interpreter's sampler. Details kept terse.
 
 local Environment = {}
 

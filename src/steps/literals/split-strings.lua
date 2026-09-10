@@ -6,17 +6,9 @@ local Step = {}
 Step.name = "split-strings"
 Step.version = 1
 
--- Breaks each plain quoted string literal
--- into several concatenated pieces so the original literal never appears verbatim
--- in the output. `"hello world"` becomes `("he".."llo w".."orld")`.
---
--- Only simple quoted literals with NO backslash escapes are touched, so every
--- piece is a substring of the original value that contains neither the quote
--- char nor a backslash -- meaning it can be re-quoted with the SAME quote char
--- without any re-escaping. Comments, long strings ([[ ]]) and any literal that
--- carries an escape are skipped and left byte-for-byte unchanged. The whole
--- replacement is wrapped in parentheses so it stays valid in call-sugar and
--- method-call positions (f"x" -> f(("x")), ("s"):upper()).
+-- Splits each plain quoted string literal into concatenated pieces so it never
+-- appears verbatim: `"hello world"` -> `("he".."llo w".."orld")`. Only escape-free
+-- simple literals are touched; the result is wrapped in parens to stay valid.
 
 -- Scan for quoted string literals that are safe to split: single/double quoted,
 -- no backslash escapes, skipping comments and long strings. Mirrors the scanner

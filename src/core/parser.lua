@@ -227,10 +227,8 @@ local function parser(tokens)
             self:expect("function")
             local name = self:take()
             if not name or name.kind ~= "identifier" then error("parser: expected function name at " .. token.start) end
-            -- Dotted / method definitions: `function a.b.c(...)` and `function a:m(...)`.
-            -- Only for non-local `function`; desugar to an assignment of an anonymous
-            -- function to the member path (methods gain an implicit `self` parameter),
-            -- reusing the existing assign/member/function nodes.
+            -- Dotted/method defs `function a.b.c(...)` / `function a:m(...)`: desugar
+            -- to an assignment of an anonymous function (methods gain `self`).
             local next_value = self:peek() and self:peek().value
             if not local_function and (next_value == "." or next_value == ":") then
                 local target = { kind = "identifier", value = name.value, start = name.start, finish = name.finish }

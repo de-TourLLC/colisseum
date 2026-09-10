@@ -47,15 +47,41 @@ function Step.apply(source, options)
     local report = type(options.progress) == "function" and options.progress or function() end
     report(0.0, "vm:compiling")
     local mainproto = RegCompiler.compile(source)
+    -- Per-build superoperators: randomly enable each fusable pair (at least one on).
+    local fuse_enabled = { MM = prng:range(0, 1) == 1, LL = prng:range(0, 1) == 1, GG = prng:range(0, 1) == 1 }
+    if not (fuse_enabled.MM or fuse_enabled.LL or fuse_enabled.GG) then fuse_enabled.MM = true end
+    RegBytecode.fuse(mainproto, fuse_enabled)
     local opcount = RegBytecode.COUNT
     local perm = {}
     for i = 1, opcount do perm[i] = i end
     for i = opcount, 2, -1 do local j = prng:range(1, i); perm[i], perm[j] = perm[j], perm[i] end
+
+    -- Polymorphic opcodes: give each op several interchangeable raw codes (chosen
+    -- per instruction); `norm` folds them back to the permuted canonical and ships
+    -- as program.o. Raw codes are one byte (total <= 255).
+    local total = opcount + prng:range(0, 255 - opcount)
+    local norm = {}
+    local aliases_for = {}
+    for c = 1, opcount do
+        norm[perm[c]] = perm[c]
+        aliases_for[perm[c]] = { perm[c] }
+    end
+    for r = opcount + 1, total do
+        local pv = perm[prng:range(1, opcount)]
+        norm[r] = pv
+        aliases_for[pv][#aliases_for[pv] + 1] = r
+    end
     local function remap(proto)
-        for _, inst in ipairs(proto.code) do inst[1] = perm[inst[1]] end
+        for _, inst in ipairs(proto.code) do
+            local list = aliases_for[perm[inst[1]]]
+            inst[1] = list[prng:range(1, #list)]
+        end
         for _, child in ipairs(proto.protos) do remap(child) end
     end
     remap(mainproto)
+    local norm_parts = {}
+    for k = 1, total do norm_parts[k] = norm[k] end
+    local norm_literal = "{" .. table.concat(norm_parts, ",") .. "}"
 
     -- Opaque in-memory encoding: the program ships as a build-foged byte stream
     -- (one concatenated blob of every proto's constants + instructions) plus a
@@ -238,19 +264,20 @@ function Step.apply(source, options)
 
     report(0.92, "vm:finishing")
     local Environment = require("src.steps.security.environment")
-    local R, S, F, G, E, A, V = prefix .. "R", prefix .. "S", prefix .. "F", prefix .. "G", prefix .. "E", prefix .. "A", prefix .. "V"
+    local R, S, F, G, E, A, V, O = prefix .. "R", prefix .. "S", prefix .. "F", prefix .. "G", prefix .. "E", prefix .. "A", prefix .. "V", prefix .. "O"
     local bundle = table.concat({
         noise_prologue(),
         "local " .. R .. "=(function()", runtime_src, "end)()",
         "local " .. S .. "=" .. blob_literal,
         "local " .. F .. "=" .. fog_literal,
         "local " .. G .. "=" .. regs_literal,
+        "local " .. O .. "=" .. norm_literal,
         "local " .. E .. "=" .. Environment.expression(),
         "local " .. A .. "=" .. Environment.anchor(),
         -- yield_interval: on Roblox, breathe (task.wait) every ~1M VM instructions
         -- when it is safe to yield, so heavy synchronous loops do not hit the
         -- execution-time limit. No-op where no scheduler exists.
-        "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})",
+        "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G .. ",o=" .. O .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})",
         "return " .. V .. "[1]," .. V .. "[2]," .. V .. "[3]," .. V .. "[4]",
     }, "\n")
     -- Collapse to a single line. The only newlines are statement separators; the

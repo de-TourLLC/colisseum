@@ -51,14 +51,8 @@ local function value_expr(prng, priors)
     return tostring(prng:range(0, 999))
 end
 
--- Build one dead decoy function. It declares between one and four locals from
--- pure values and returns some of them. Defining it has no side effect, and the
--- step never emits a call to it, so the body is unreachable at runtime.
---
--- Both the *shape* varies per decoy (a `local function f(...)` statement or a
--- `local f = function(...)` binding), and the signature takes zero to two params
--- that the body can fold in, so the decoys are not a recurring param-less
--- `local function <id>() ... return <id> end` block a scanner could key on.
+-- Build one dead decoy function (pure locals, never called, so unreachable). The
+-- shape and signature vary per decoy so it isn't a recurring scannable block.
 local function build_function(prng)
     local name = prng:identifier(prng:range(6, 12))
     local params = {}

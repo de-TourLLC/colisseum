@@ -29,25 +29,16 @@ local function bundled_compiler()
     return nil
 end
 
--- Turn `source` into a self-contained chunk that: embeds the Fiu Luau VM, carries
--- the program as ChaCha20-encrypted Luau bytecode, decrypts it at load with pure
--- bitwise ops (never loadstring), verifies its integrity, and executes it on the
--- VM. This is a real bytecode-VM backend in the spirit of Prometheus/Hercules --
--- the source never exists as text or as plaintext bytecode in the output.
+-- Package `source` into a self-contained chunk: embeds the Fiu Luau VM, carries
+-- the program as ChaCha20-encrypted Luau bytecode, decrypts+verifies with bitwise
+-- ops (no loadstring), runs it. Source never ships as text or plaintext bytecode.
 function Step.apply(source, options)
     if type(source) ~= "string" then error("vm: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("vm: options must be a table") end
     options = options or {}
-    -- Backend selection. Default (both Lua AND Luau/Roblox targets): Colisseum's
-    -- own native bytecode VM. It is fully obfuscated -- per-build opcode
-    -- permutation + KAT enum dispatch, ChaCha20-encrypted bytecode, no readable
-    -- interpreter -- and its single output runs on plain Lua/LuaJIT and on
-    -- Luau/Roblox alike (portable bit32/bit and getfenv(0)/_G resolution).
-    --
-    -- The Fiu backend (opt-in: options.backend == "fiu") runs real Luau bytecode,
-    -- so it supports the full Luau syntax the native parser does not (continue,
-    -- type annotations, string interpolation, if-expressions), but it ships the
-    -- interpreter as (minified) readable source and needs the Luau compiler.
+    -- Default backend: the native bytecode VM (portable Lua + Luau/Roblox). The Fiu
+    -- backend (options.backend == "fiu") runs real Luau bytecode for full Luau
+    -- syntax, but needs the Luau compiler and ships readable interpreter source.
     if options.backend == "register" then
         return require("src.steps.security.register-vm").apply(source, options)
     end

@@ -19,13 +19,9 @@ local function limit(options, name, default)
     return value
 end
 
--- Opaque-FALSE predicates: each is provably always false, so the block it guards
--- is dead and semantics are preserved -- but a deobfuscator must reason about an
--- arithmetic, float, or type invariant to prove it, instead of stripping `if false`.
--- Mixing several families means no single constant-folding rule kills them all.
--- Families reference a RUNTIME value (os.time()/os.clock()), so the predicate is
--- not constant-foldable from the bundle: proving it false requires modeling the
--- standard library, not just evaluating integer literals.
+-- Opaque-FALSE predicates: each is provably always false (dead guarded block), but
+-- proving it needs an arithmetic/float/type invariant, and several families
+-- reference a runtime value so they aren't constant-foldable from the bundle.
 local function opaque_false(prng)
     local kind = prng:range(1, 10)
     if kind == 1 then

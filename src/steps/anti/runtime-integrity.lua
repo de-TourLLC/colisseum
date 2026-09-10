@@ -1,23 +1,11 @@
--- runtime-integrity
---
--- Prepends a small, self-contained startup guard that verifies the runtime
--- environment has not been tampered
--- with before the original program runs. On a clean Lua 5.1 / LuaJIT / Luau
--- runtime every check is designed to pass, the guard does nothing, and the
--- original chunk executes and returns exactly as before. It only calls
--- error(..., 0) when the environment genuinely looks altered:
---
---   * a self-consistency tripwire: an embedded build nonce is re-hashed at
---     startup and compared against the expected value computed here at build
---     time (a light "was the guard itself patched?" check),
---   * core functions were swapped out (_G.type ~= type, _G.pcall ~= pcall, ...),
---   * a debug hook is actually installed (only flagged when one is present;
---     the absence of the debug library is never treated as tampering).
---
--- Every access that could be intercepted is wrapped in pcall, and every check
--- is conservative so a normal run never trips it.
+-- runtime-integrity: prepends a startup guard that aborts if the runtime looks
+-- tampered (self-consistency nonce, swapped core functions, or an installed debug
+-- hook). A clean run passes silently; every check is conservative and pcall-wrapped.
 
 local Entropy = require("src.core.entropy")
+-- Strip the guard's comments before emission so its design commentary never ships
+-- (blanking preserves line boundaries, keeping runtime line numbers intact).
+local StripComments = require("src.steps.strip-comments")
 
 local Step = {}
 Step.name = "runtime-integrity"
@@ -97,16 +85,16 @@ do
     -- comparisons are false.
     if _ri_global ~= nil then
         if _ri_global.type ~= _ri_type then
-            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x5C08", 0)
+            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x41D7", 0)
         end
         if _ri_global.pcall ~= _ri_pcall then
-            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x5C08", 0)
+            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x41D7", 0)
         end
         if _ri_global.error ~= _ri_error then
-            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x5C08", 0)
+            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x41D7", 0)
         end
         if _ri_global.tostring ~= _ri_tostring then
-            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x5C08", 0)
+            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x41D7", 0)
         end
     end
 
@@ -116,7 +104,7 @@ do
     if _ri_ok_dbg and _ri_type(_ri_debug) == "table" and _ri_type(_ri_debug.gethook) == "function" then
         local _ri_ok_hook, _ri_hook = _ri_pcall(_ri_debug.gethook)
         if _ri_ok_hook and _ri_hook ~= nil then
-            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x5C08", 0)
+            _ri_error("ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x3E19", 0)
         end
     end
 end
@@ -171,7 +159,7 @@ function Step.apply(source, options)
     local guard = TEMPLATE:gsub("_ri_", prefix):format(
         nonce_piece_1, nonce_piece_2, seed2, expected_piece_1, expected_piece_2)
 
-    return shebang .. guard .. "\n" .. body
+    return shebang .. StripComments.apply(guard) .. "\n" .. body
 end
 
 setmetatable(Step, {

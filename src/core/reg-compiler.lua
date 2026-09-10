@@ -1,8 +1,5 @@
--- Register VM compiler: Lua AST (from src.core.parser) -> a proto tree for the
--- register interpreter (src.core.reg-runtime). Single-pass codegen with a small
--- register allocator, constant interning, jump patching, boxed upvalues, and
--- Lua-correct multi-value alignment for calls/returns/varargs/table constructors.
--- No loadstring.
+-- Register VM compiler: Lua AST -> proto tree for reg-runtime. Single-pass codegen
+-- (reg allocator, constant interning, jump patching, boxed upvalues). No loadstring.
 
 local Parser = require("src.core.parser")
 local LuauTypes = require("src.core.luau-type-erase")
@@ -12,9 +9,8 @@ local OP = RB.OP
 local RegCompiler = {}
 
 -- ---- capture analysis -------------------------------------------------------
--- A function's local/param is "captured" if any nested function references its
--- name. Over-approximate (ignores shadowing inside nested functions): boxing a
--- non-captured local is still correct, just marginally slower.
+-- A local/param is "captured" if a nested function references its name (over-
+-- approximated; boxing a non-captured local is still correct, just slower).
 
 local function has_vararg(params)
     for _, p in ipairs(params) do if p == "..." then return true end end
@@ -231,10 +227,8 @@ local function compile_function(params, body, is_vararg, parent)
         return nil
     end
 
-    -- Decode a string literal token (source spelling) to its value. Handles long
-    -- strings and all Lua escapes including decimal (\ddd) and hex (\xHH), matching
-    -- reference Lua -- field-index rewrites keys as \ddd escapes, so this must be
-    -- exact.
+    -- Decode a string literal (source spelling) to its value; handles long strings
+    -- and all Lua escapes (\ddd, \xHH), matching reference Lua exactly.
     local ESC = { a = "\a", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t", v = "\v", ["\\"] = "\\", ['"'] = '"', ["'"] = "'", ["\n"] = "\n" }
     local function decode_string_literal(src)
         if src:sub(1, 1) == "[" then

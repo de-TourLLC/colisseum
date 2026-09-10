@@ -7,17 +7,9 @@ Step.version = 2
 -- access in Lua, so the result is valid by construction.
 Step.emits_valid = true
 
--- Adapted from Luraph's API indirection: rewrite dotted field access `a.b` into
--- bracket-indexed `a["\098"]` (key spelled as decimal escapes), so pattern-based
--- deobfuscators can no longer grep for field and method names.
---
--- IMPORTANT compatibility rule: the standard libraries and host singletons are
--- left in dot form. Luau compiles `string.char` to a fast import that the Fiu VM
--- (the `--secure` backend) resolves, but `string["char"]` compiles to a runtime
--- GETGLOBAL that Fiu does not expose for the stdlib, which would make the base nil
--- at run time. Restricting the rewrite to user tables / locals keeps the output
--- correct under Lua 5.1, LuaJIT, Luau, Roblox and the Fiu VM alike, while still
--- hiding the names that actually matter (user object methods, local aliases).
+-- Rewrite dotted field access `a.b` into bracket form `a["\098"]` (key as decimal
+-- escapes) so field/method names can't be grepped. Stdlib/host singletons stay in
+-- dot form (bracket form breaks the Fiu `--secure` backend's stdlib imports).
 local protected_bases = {
     string = true, table = true, math = true, coroutine = true, debug = true,
     os = true, io = true, utf8 = true, bit32 = true, buffer = true, task = true,
