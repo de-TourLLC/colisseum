@@ -16,4 +16,4 @@ By using this software you agree:
 
 ## Reporting issues
 
-If you find a bug, security vulnerability, or have a problem with the tool, open an issue on the [GitHub repository](https://github.com/anomalyco/opencode/issues). For security vulnerabilities, use GitHub's **Private Vulnerability Reporting** under the Security tab — do not open a public issue.
+If you find a bug, security vulnerability, or have a problem with the tool, open an issue on the [GitHub repository](https://github.com/de-TourLLC/colisseum/issues). For security vulnerabilities, use GitHub's **Private Vulnerability Reporting** under the Security tab — do not open a public issue.

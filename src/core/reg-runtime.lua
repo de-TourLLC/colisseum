@@ -37,6 +37,33 @@ do
 end
 local function pack(...) return { n = kk_select("#", ...), ... } end
 
+-- Fibonacci (Zeckendorf) blob layer. When a build enables it, the opaque byte
+-- stream is carried Fibonacci-coded and bit-packed; this rebuilds the exact fogged
+-- bytes ONCE at VM start (the hot loop is untouched). Pure integer math, portable
+-- across Lua 5.1 / LuaJIT / Luau. Inverse of fibonacci.encode_bytes + pack_bits.
+local kk_fib = { 1, 2 }
+for kk_i = 3, 15 do kk_fib[kk_i] = kk_fib[kk_i - 1] + kk_fib[kk_i - 2] end
+local kk_pow2 = { [0] = 1, 2, 4, 8, 16, 32, 64, 128 }
+local function fib_unpack(packed, bitlen)
+    local out, count = {}, 0
+    local n, i, prev, pos = 0, 1, 0, 1
+    while pos <= bitlen do
+        local byte_index = kk_floor((pos - 1) / 8) + 1
+        local bit = kk_floor((packed:byte(byte_index) or 0) / kk_pow2[7 - ((pos - 1) % 8)]) % 2
+        if bit == 1 and prev == 1 then
+            count = count + 1
+            out[count] = kk_char((n - 1) % 256)
+            n, i, prev = 0, 1, 0
+        else
+            if bit == 1 then n = n + kk_fib[i] end
+            prev = bit
+            i = i + 1
+        end
+        pos = pos + 1
+    end
+    return kk_concat(out)
+end
+
 local OP = RegBytecode.OP
 
 local Runtime = {}
@@ -47,6 +74,9 @@ function Runtime.run(program, options)
     local globals = options.environment or _G
 
     local S = program.S
+    -- Optional Fibonacci blob layer: program.fib is the exact bit length of the
+    -- packed codeword stream. Rebuild the fogged byte stream before any offset math.
+    if program.fib then S = fib_unpack(S, program.fib) end
     local regs = program.r
     local fog = program.f or { 0 }
     local nfog = #fog

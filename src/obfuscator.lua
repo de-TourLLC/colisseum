@@ -166,6 +166,33 @@ local function load_step(name)
     return require(StepPaths.module(name))
 end
 
+-- Centralized "bloat" amplifier. `options.bloat` (1..16) multiplies the dead/noise
+-- budget of every noise step, so a single knob scales injected dead code across ALL
+-- presets without editing each preset table. Every key is clamped to a per-key
+-- ceiling (the "techo"): output grows large-but-bounded, so it stays loadable under
+-- Roblox/Luau script-size and parser limits instead of becoming un-ingestible.
+-- bloat=1 (default) is a strict no-op -- existing preset output is unchanged.
+local BLOAT_CEILINGS = {
+    max_insertions = 4096,
+    max_bytes      = 262144,
+    max_replacements = 100000,
+    max_functions  = 64,
+    max_entries    = 4096,
+    maxTripwires   = 4096,
+    maxBytes       = 262144,
+}
+local function apply_bloat(settings, bloat)
+    if not bloat or bloat <= 1 then return end
+    for key, ceiling in pairs(BLOAT_CEILINGS) do
+        local value = settings[key]
+        if type(value) == "number" and value >= 1 then
+            local scaled = math.floor(value * bloat)
+            settings[key] = scaled > ceiling and ceiling or scaled
+        end
+    end
+end
+Obfuscator.BLOAT_MAX = 16
+
 function Obfuscator.preset(name)
     name = tostring(name):lower()
     if not presets[name] then error("unknown preset: " .. tostring(name)) end
@@ -204,6 +231,9 @@ function Obfuscator.obfuscate(source, options)
     -- fresh seed is drawn so every obfuscation differs -- distinct keys, names,
     -- injected values, and tripwires -- even for identical input.
     local run_seed = Entropy.normalize(options.seed) or Entropy.collect()
+    -- bloat amplifies every noise step's budget by an integer factor (see apply_bloat).
+    local bloat = math.floor(tonumber(options.bloat) or 1)
+    if bloat < 1 then bloat = 1 elseif bloat > Obfuscator.BLOAT_MAX then bloat = Obfuscator.BLOAT_MAX end
     local report = type(options.on_progress) == "function" and options.on_progress or nil
     -- The VM/backend step dominates build time, so weight it heavily; the bar and
     -- ETA then track real work instead of raw step count.
@@ -229,6 +259,12 @@ function Obfuscator.obfuscate(source, options)
         settings.target = target
         if settings.seed == nil then
             settings.seed = Entropy.mix(run_seed, name .. ":" .. step_index)
+        end
+        -- Scale this step's noise budget by the build-wide bloat factor (no-op at 1).
+        apply_bloat(settings, bloat)
+        -- Build-wide Fibonacci blob layer flows to the VM backend step.
+        if options.fibonacci and name == "vm" and settings.fibonacci == nil then
+            settings.fibonacci = true
         end
         -- Let the (slow) VM backend report sub-phase progress within its weighted
         -- share, so the bar and ETA keep moving during packaging.
@@ -293,6 +329,7 @@ function Obfuscator.package_luau(source, options)
         steps = steps,
         target = target,
         seed = options.seed,
+        bloat = options.bloat,
         on_progress = options.on_progress
     })
     return load_step("vm").apply(transformed, {
@@ -301,6 +338,7 @@ function Obfuscator.package_luau(source, options)
         seed = options.seed,
         compiler = options.compiler,
         fiu = options.fiu,
+        fibonacci = options.fibonacci,
         compiler_options = options.compiler_options
     })
 end

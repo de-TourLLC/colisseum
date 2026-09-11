@@ -92,6 +92,18 @@ function Step.apply(source, options)
     local fog = {}
     for i = 1, nfog do fog[i] = prng:range(0, 255) end
     local blob, regs = RegBytecode.encode_opaque(mainproto, fog)
+    -- Optional Fibonacci (Zeckendorf) blob layer: carry the fogged byte stream as a
+    -- bit-packed sequence of self-delimiting Fibonacci codewords (every numeric
+    -- constant, operand, and offset in the blob is thereby re-encoded). The runtime
+    -- rebuilds the exact bytes once at VM start; the hot loop is unchanged. Opt-in
+    -- (options.fibonacci) since it grows the payload and adds a one-time decode.
+    local fib_field = ""
+    if options.fibonacci then
+        local Fibonacci = require("src.core.fibonacci")
+        local packed, bitlen = Fibonacci.pack_bits(Fibonacci.encode_bytes(blob))
+        blob = packed
+        fib_field = ",fib=" .. bitlen
+    end
     local fog_literal = "{" .. table.concat(fog, ",") .. "}"
     local blob_literal = '"' .. blob:gsub(".", function(c) return string.format("\\%03d", c:byte()) end) .. '"'
     local regs_parts, max_id = {}, 0
@@ -277,7 +289,7 @@ function Step.apply(source, options)
         -- yield_interval: on Roblox, breathe (task.wait) every ~1M VM instructions
         -- when it is safe to yield, so heavy synchronous loops do not hit the
         -- execution-time limit. No-op where no scheduler exists.
-        "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G .. ",o=" .. O .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})",
+        "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G .. ",o=" .. O .. fib_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})",
         "return " .. V .. "[1]," .. V .. "[2]," .. V .. "[3]," .. V .. "[4]",
     }, "\n")
     -- Collapse to a single line. The only newlines are statement separators; the

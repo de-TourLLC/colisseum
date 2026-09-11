@@ -24,7 +24,7 @@ end
 
 local function check_source(source)
     if type(source) ~= "string" then error(Step.name .. ": source must be a string") end
-    if #source > 1024 * 1024 then error(Step.name .. ": source exceeds the 1048576 byte limit") end
+    if #source > 8 * 1024 * 1024 then error(Step.name .. ": source exceeds the 8388608 byte limit") end
     local valid, message, position = Validate.syntax(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
@@ -91,7 +91,7 @@ function Step.apply(source, options)
     local max_functions = limit(options, "max_functions", 3)
     local max_bytes = limit(options, "max_bytes", 4096)
     if max_functions > 64 then error(Step.name .. ": max_functions exceeds the hard limit") end
-    if max_bytes > 65536 then error(Step.name .. ": max_bytes exceeds the hard limit") end
+    if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
     -- Deterministic given a seed; different seeds yield different decoys. A
     -- fixed default keeps the step reproducible when no seed is supplied.
     local prng = Entropy.prng(options.seed or "junk-functions")

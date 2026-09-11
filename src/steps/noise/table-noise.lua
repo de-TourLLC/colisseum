@@ -22,14 +22,14 @@ end
 function Step.apply(source, options)
     if type(source) ~= "string" then error(Step.name .. ": source must be a string") end
     if options ~= nil and type(options) ~= "table" then error(Step.name .. ": options must be a table") end
-    if #source > 1024 * 1024 then error(Step.name .. ": source exceeds the 1048576 byte limit") end
+    if #source > 8 * 1024 * 1024 then error(Step.name .. ": source exceeds the 8388608 byte limit") end
     local valid, message, position = Validate.syntax(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
     options = options or {}
     local entries = positive(options, "max_entries", 8)
     local max_bytes = positive(options, "max_bytes", 2048)
-    if entries > 1024 then error(Step.name .. ": max_entries exceeds the hard limit") end
-    if max_bytes > 65536 then error(Step.name .. ": max_bytes exceeds the hard limit") end
+    if entries > 4096 then error(Step.name .. ": max_entries exceeds the hard limit") end
+    if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
     -- A seed randomises the table name and its static contents per build so the
     -- injected table carries no fixed signature; without one it is deterministic.
     local prng = options.seed ~= nil and Entropy.prng(options.seed) or nil

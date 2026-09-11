@@ -22,7 +22,7 @@ end
 
 local function check_source(source)
     if type(source) ~= "string" then error(Step.name .. ": source must be a string") end
-    if #source > 1024 * 1024 then error(Step.name .. ": source exceeds the 1048576 byte limit") end
+    if #source > 8 * 1024 * 1024 then error(Step.name .. ": source exceeds the 8388608 byte limit") end
     local valid, message, position = Validate.syntax(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
@@ -78,8 +78,8 @@ function Step.apply(source, options)
     check_source(source)
     local max_insertions = limit(options, "max_insertions", 8)
     local max_bytes = limit(options, "max_bytes", 4096)
-    if max_insertions > 1024 then error(Step.name .. ": max_insertions exceeds the hard limit") end
-    if max_bytes > 65536 then error(Step.name .. ": max_bytes exceeds the hard limit") end
+    if max_insertions > 4096 then error(Step.name .. ": max_insertions exceeds the hard limit") end
+    if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
     local shebang = source:match("^(#![^\n]*\n)") or ""
     local body = source:sub(#shebang + 1)
     -- Always drive the injected noise from a PRNG: without one the fallback would

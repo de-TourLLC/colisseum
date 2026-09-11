@@ -42,6 +42,8 @@ local function usage()
     io.stderr:write("colisseum: usage:\n")
     io.stderr:write("  lua cli.lua --preset Easy|Medium|Hard|Full|Total|Fortress [--LuaU|--Roblox --secure --backend native|register|fiu --compiler path] --out output.lua input.lua\n")
     io.stderr:write("  Fortress = maximum client hardening on the fast register VM (Lua + Luau/Roblox); every static layer + encrypted, permuted, name-mangled bytecode.\n")
+    io.stderr:write("  --bloat N (1-16) amplifies injected dead code across every preset. Big but bounded, so output still loads under Roblox/Luau size limits. Default 1.\n")
+    io.stderr:write("  --fibonacci (--fib) carries the register-VM bytecode as bit-packed Fibonacci/Zeckendorf codewords (register backend). Adds a one-time decode at VM start.\n")
     io.stderr:write("  lua cli.lua --preset <name> --batch --out <output-dir> file1.lua file2.lua ...\n")
     io.stderr:write("  backends: native (default) = tree-walking VM; register = faster register VM (2-6x); both run on\n")
     io.stderr:write("            Lua and Luau/Roblox with no compiler. fiu = real Luau bytecode VM for full Luau syntax (needs --LuaU + compiler).\n")
@@ -79,6 +81,10 @@ while index <= #arg do
         arguments.backend = "fiu"
     elseif value == "--backend" then
         arguments.backend = required_value(value):lower()
+    elseif value == "--bloat" then
+        arguments.bloat = tonumber(required_value(value))
+    elseif value == "--fibonacci" or value == "--fib" then
+        arguments.fibonacci = true
     elseif value == "--batch" then
         arguments.batch = true
     elseif value == "--jobs" then
@@ -252,6 +258,8 @@ local function obfuscate_source(source)
                 target = arguments.luau and "luau" or "lua",
                 compiler = compiler,
                 fiu = arguments.fiu,
+                bloat = arguments.bloat,
+                fibonacci = arguments.fibonacci,
                 compiler_options = { roblox = arguments.roblox },
                 on_progress = progress
             })
@@ -259,6 +267,8 @@ local function obfuscate_source(source)
         local transformed = obfuscator.obfuscate(source, {
             preset = aliases[preset],
             target = arguments.luau and "luau" or "lua",
+            bloat = arguments.bloat,
+            fibonacci = arguments.fibonacci,
             on_progress = progress
         })
         return transformed

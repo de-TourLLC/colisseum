@@ -18,7 +18,7 @@ local falsy = { "(false or false)", "(not true)", "(1==0)", "(false and true)", 
 function Step.apply(source, options)
     if type(source) ~= "string" then error(Step.name .. ": source must be a string") end
     if options ~= nil and type(options) ~= "table" then error(Step.name .. ": options must be a table") end
-    if #source > 1024 * 1024 then error(Step.name .. ": source exceeds the 1048576 byte limit") end
+    if #source > 8 * 1024 * 1024 then error(Step.name .. ": source exceeds the 8388608 byte limit") end
     local valid, message, position = Validate.syntax(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
     options = options or {}
@@ -27,7 +27,7 @@ function Step.apply(source, options)
     if type(max_replacements) ~= "number" or max_replacements < 1 or max_replacements % 1 ~= 0 then error(Step.name .. ": max_replacements must be a positive integer") end
     if type(max_bytes) ~= "number" or max_bytes < 1 or max_bytes % 1 ~= 0 then error(Step.name .. ": max_bytes must be a positive integer") end
     if max_replacements > 100000 then error(Step.name .. ": max_replacements exceeds the hard limit") end
-    if max_bytes > 65536 then error(Step.name .. ": max_bytes exceeds the hard limit") end
+    if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
     -- A seed varies which equivalent expression each literal becomes, so no two
     -- builds share the same boolean-rewrite pattern; without one, the canonical
     -- first form is used for deterministic output.

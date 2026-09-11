@@ -81,6 +81,9 @@ function Step.apply(source, options)
     local max_tripwires = positive_option(options, "maxTripwires", 8)
     local max_bytes = positive_option(options, "maxBytes", 2048)
     local density = positive_option(options, "density", 240)
+    -- Bounded ceilings so the build-wide bloat amplifier stays large-but-finite.
+    if max_tripwires > 4096 then max_tripwires = 4096 end
+    if max_bytes > 262144 then max_bytes = 262144 end
     -- A seed makes tripwires unique per build; without one a stable default keeps
     -- output deterministic for reproducible builds and tests.
     local prng = Entropy.prng(options.seed ~= nil and options.seed or "anti-deobfuscation")
