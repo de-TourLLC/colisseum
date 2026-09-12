@@ -219,6 +219,7 @@ local extra = {
     { "split-strings", "Splits string literals into concatenated pieces at random cut points." },
     { "junk-functions", "Adds bounded, never-called dead decoy functions.", 2 },
     { "junk-comments", "Sprinkles bounded random-glyph block comments between tokens." },
+    { "signature", "Stamps a credits string on top and disguises integer literals as #(\"random text\") length-expressions from signature.json." },
     { "field-index", "Rewrites dotted field access into bracket-indexed access with encoded keys.", 2 },
     { "runtime-integrity", "Prepends a runtime self-integrity and environment guard." },
     { "native-vm", "Compiles to ChaCha-encrypted native bytecode run by the embedded VM with per-build opcode randomization and KAT enum dispatch (Lua target, no loadstring).", 3 },

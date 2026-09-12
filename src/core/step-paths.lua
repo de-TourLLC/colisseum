@@ -1,7 +1,7 @@
 local Paths = {}
 
 local groups = {
-    noise = { "anti-deobfuscation", "boolean-noise", "field-index", "garbage-code", "junk-comments", "junk-functions", "opaque-predicates", "table-noise", "visual-noise" },
+    noise = { "anti-deobfuscation", "boolean-noise", "field-index", "garbage-code", "junk-comments", "junk-functions", "opaque-predicates", "signature", "table-noise", "visual-noise" },
     anti = { "anti-tamper", "authenticated-strings", "coroutine-integrity-guard", "runtime-integrity" },
     analysis = { "complexity-guard", "comment-budget-analysis", "dialect-guard", "dynamic-feature-guard", "function-budget-analysis", "global-access-report", "identifier-collision-guard", "literal-budget-analysis", "line-length-analysis", "numeric-validity-validation", "operator-usage-report", "resource-budget-guard", "string-termination-validation", "unsupported-syntax-guard" },
     format = { "blank-line-collapse", "blank-line-policy", "comment-policy", "comment-preserving-line-normalize", "comma-layout", "delimiter-line-policy", "delimiter-normalize", "deterministic-formatting", "deterministic-layout", "final-newline-policy", "line-ending-normalize", "line-ending-policy", "newline-normalize", "operator-canonicalization", "operator-spacing-normalize", "protected-literal-formatting", "protected-token-spacing", "semicolon-normalize", "semicolon-policy", "tab-indent-normalize", "trailing-whitespace", "whitespace-normalize" },

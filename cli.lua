@@ -260,26 +260,39 @@ local function fmt_time(sec)
     if sec >= 60 then return string.format("%dm%02ds", math.floor(sec / 60), math.floor(sec % 60)) end
     return string.format("%.0fs", sec)
 end
-local prog_start, spin_i, cur_tip, tip_at = nil, 0, nil, 0
--- progress(fraction 0..1, label). Reports a whole-build fraction; the pipeline and
--- the VM backend both feed this so the bar and ETA advance through the slow parts.
-local function progress(fraction, label)
+-- Live display state. The pipeline only feeds `fraction`/`label`; the spinner and
+-- the rotating tip are driven purely by the clock, so they keep animating even
+-- while a single slow step blocks and the percentage sits still.
+-- How fast the spinner spins, in seconds per frame. Small = fast. The spinner and
+-- the tip run on their own clocks; the bar/percent/ETA only move on real progress.
+local SPIN_INTERVAL = 0.05
+local anim = {
+    fraction = 0, label = "", started = nil,
+    tip = nil, tip_at = -1, last_frame = -1,
+    drawing = false, done = false,
+}
+
+-- Render the current line. The spinner frame and the tip are chosen from the
+-- clock (not from how many times we were called), so they advance on their own
+-- cadence regardless of whether `fraction` moved.
+local function draw()
+    anim.drawing = true
     local now = os.clock()
-    prog_start = prog_start or now
+    anim.started = anim.started or now
+    local fraction = anim.fraction
     if not fraction or fraction < 0 then fraction = 0 elseif fraction > 1 then fraction = 1 end
-    local done = label == "done" or fraction >= 1
-    -- Rotate the tip on a ~2s wall-clock timer only -- NOT on every progress update.
-    -- The bar/percentage/spinner still redraw on each call; the tip holds until 2s
-    -- pass, so it is decoupled from how fast the percentage moves.
-    if not cur_tip or now - tip_at >= 2 then cur_tip = pick_tip(); tip_at = now end
-    spin_i = (spin_i % #SPIN) + 1
+    local done = anim.done
+    -- Tip rotates on a ~2s clock timer, independent of the percentage.
+    if not anim.tip or now - anim.tip_at >= 2 then anim.tip = pick_tip(); anim.tip_at = now end
+    -- Spinner frame runs off the clock, independent of the percentage.
+    local frame = math.floor(now / SPIN_INTERVAL) % #SPIN + 1
     local width = 26
     local filled = math.floor(width * fraction + 0.5)
     local pct = math.floor(fraction * 100 + 0.5)
-    local elapsed = now - prog_start
+    local elapsed = now - anim.started
     local eta = done and elapsed or ((fraction > 0.02) and elapsed * (1 - fraction) / fraction or nil)
     local timetext = (done and "in " or "eta ") .. (eta and fmt_time(eta) or "--")
-    local name = (label or ""):gsub("^vm:", "")
+    local name = (anim.label or ""):gsub("^vm:", "")
     if done then name = "done" end
     if USE_COLOR then
         -- Bar: each filled cell is a purple->white gradient step; empty cells are a
@@ -290,26 +303,63 @@ local function progress(fraction, label)
             else cells[j] = fg(96, 66, 128) .. BAR_OFF end
         end
         io.stderr:write("\r",
-            (done and fg(200, 170, 255) or fg(grad(0.4))), (done and CHECK or SPIN[spin_i]), RESET, " ",
+            (done and fg(200, 170, 255) or fg(grad(0.4))), (done and CHECK or SPIN[frame]), RESET, " ",
             "\27[1m", fg(grad(0.85)), (done and "Done       " or "Obfuscating"), RESET, " ",
             table.concat(cells), RESET, " ",
             "\27[1m", fg(255, 255, 255), string.format("%3d%%", pct), RESET, " ",
             fg(grad(0.55)), string.format("%-9s", timetext), RESET, " ",
             fg(grad(0.4)), string.format("%-22s", name), RESET, " ",
-            fg(210, 180, 255), cur_tip, RESET, "\27[K")
+            fg(210, 180, 255), anim.tip, RESET, "\27[K")
     else
         io.stderr:write(string.format("\r%s %-11s [%s%s] %3d%% %-9s %-22s %s   ",
             done and "OK" or ">", done and "Done" or "Obfuscating",
-            string.rep("#", filled), string.rep("-", width - filled), pct, timetext, name, cur_tip))
+            string.rep("#", filled), string.rep("-", width - filled), pct, timetext, name, anim.tip))
     end
     io.stderr:flush()
     if done then io.stderr:write("\n") end
+    anim.drawing = false
+end
+
+-- progress(fraction 0..1, label). The pipeline and VM backend feed the whole-build
+-- fraction and the current step name here; drawing itself is done by draw().
+local function progress(fraction, label)
+    if fraction and fraction >= 0 then anim.fraction = fraction end
+    if label then anim.label = label end
+    if label == "done" or (fraction and fraction >= 1) then anim.done = true end
+    draw()
+end
+
+-- Tick: called frequently by the pipeline's hot loops (Lexer.scan and the VM
+-- backend) through a global hook. Debug hooks are unreliable under LuaJIT because
+-- compiled traces skip them, but an explicit function call always runs -- so this
+-- keeps the spinner and tip moving even while one step blocks for seconds and the
+-- percentage sits still. Frame-gated: it repaints at most once per spinner frame no
+-- matter how often it fires, and never while draw() is mid-write or after the final
+-- line, so it cannot corrupt the output or measurably slow the loop.
+local function tick()
+    if anim.drawing or anim.done then return end
+    local frame = math.floor(os.clock() / SPIN_INTERVAL)
+    if frame == anim.last_frame then return end
+    anim.last_frame = frame
+    draw()
+end
+
+-- Install/remove the global tick around a blocking region. Reset per file so batch
+-- mode starts each line fresh.
+local function anim_start()
+    anim.started, anim.fraction, anim.label, anim.done = nil, 0, "", false
+    anim.tip, anim.tip_at, anim.last_frame = nil, -1, -1
+    _G.__colisseum_tick = tick
+end
+local function anim_stop()
+    _G.__colisseum_tick = nil
 end
 
 -- Obfuscate one in-memory source string, returning (output, error). Loaded once
 -- and reused across every file in a batch, so there is no per-file startup cost.
 local function obfuscate_source(source)
-    return obfuscator.try(function()
+    anim_start()
+    local output, process_error = obfuscator.try(function()
         if arguments.secure or arguments.backend then
             -- Backend selection (VM packaging). native (default) = Colisseum's own
             -- obfuscated tree-walking VM; register = the faster register VM (2-6x);
@@ -350,6 +400,8 @@ local function obfuscate_source(source)
         })
         return transformed
     end)
+    anim_stop()
+    return output, process_error
 end
 
 local function read_file(path)

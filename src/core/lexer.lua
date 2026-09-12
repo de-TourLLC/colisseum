@@ -29,7 +29,18 @@ function Lexer.scan(source)
     if type(source) ~= "string" then error("lexer: source must be a string") end
     local result = {}
     local index = 1
+    -- Optional progress heartbeat: the CLI installs a global tick so its spinner
+    -- keeps animating during this hot loop, which can run for seconds on the large
+    -- intermediate source that bloated presets produce. Cached once and called only
+    -- every few thousand iterations, so it never measurably slows scanning; nil in
+    -- normal library/test use.
+    local tick = _G.__colisseum_tick
+    local since_tick = 0
     while index <= #source do
+        if tick then
+            since_tick = since_tick + 1
+            if since_tick >= 4096 then since_tick = 0; tick() end
+        end
         local start = index
         local char = source:sub(index, index)
         if char:match("%s") then

@@ -22,7 +22,8 @@ local presets = {
         { "line-ending-normalize", { } },
         { "trailing-whitespace", { } },
         { "minify", { } },
-        { "rename", { } }
+        { "rename", { } },
+        { "signature", { } }
     },
     hard = {
         { "line-ending-normalize", { } },
@@ -40,7 +41,8 @@ local presets = {
         { "minify", { } },
         { "field-index", { } },
         { "junk-comments", { } },
-        { "rename", { } }
+        { "rename", { } },
+        { "signature", { } }
     },
     medium = {
         { "line-ending-normalize", { } },
@@ -54,7 +56,8 @@ local presets = {
         { "minify", { } },
         { "field-index", { } },
         { "junk-comments", { } },
-        { "rename", { } }
+        { "rename", { } },
+        { "signature", { } }
     },
     full = {
         { "line-ending-normalize", { } },
@@ -71,7 +74,8 @@ local presets = {
         { "anti-tamper", { threshold = 3, detectExecutor = true } },
         { "field-index", { } },
         { "junk-comments", { } },
-        { "rename", { } }
+        { "rename", { } },
+        { "signature", { } }
     },
     total = {
         { "line-ending-normalize", { } },
@@ -97,7 +101,8 @@ local presets = {
         { "field-index", { } },
         { "junk-comments", { } },
         { "rename", { } },
-        { "vm", { } }
+        { "vm", { } },
+        { "signature", { } }
     },
     -- "fortress": maximum preset -- every static layer applied in two re-randomized
     -- waves, feeding the register VM backend. Runs on Lua and Luau/Roblox.
@@ -133,7 +138,8 @@ local presets = {
         { "junk-comments", { density = 0.22, max_bytes = 16384 } },
         { "rename", { } },
         { "minify", { } },
-        { "vm", { backend = "register", encrypt = true, tamperVM = true } }
+        { "vm", { backend = "register", encrypt = true, tamperVM = true } },
+        { "signature", { density = 0.35, max_bytes = 131072 } }
     },
     -- "secure" is the recommended production preset: everything "hard" provides
     -- plus split/constant-array pooling of string literals and a runtime
@@ -158,7 +164,8 @@ local presets = {
         { "minify", { } },
         { "field-index", { } },
         { "junk-comments", { } },
-        { "rename", { } }
+        { "rename", { } },
+        { "signature", { } }
     }
 }
 
