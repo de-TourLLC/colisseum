@@ -64,6 +64,62 @@ local function fib_unpack(packed, bitlen)
     return kk_concat(out)
 end
 
+-- Inline RFC 8439 ChaCha20 keystream (mirror of src/core/chacha.lua). Used when a
+-- build enables the real stream cipher: the fogged blob is XOR-masked with this
+-- keystream, derived once at VM start (build/runtime agreement is verified by the
+-- register VM differential + encrypt suites). Portable 32-bit integer math.
+local kk_pow = {}
+do local v = 1; for i = 0, 32 do kk_pow[i] = v; v = v * 2 end end
+local function cc_add(a, b) return (a + b) % 4294967296 end
+local function cc_rotl(x, n) local lo = x % kk_pow[32 - n]; return lo * kk_pow[n] + kk_floor(x / kk_pow[32 - n]) end
+local function cc_qr(s, a, b, c, d)
+    s[a] = cc_add(s[a], s[b]); s[d] = cc_rotl(kk_xor(s[d], s[a]) % 4294967296, 16)
+    s[c] = cc_add(s[c], s[d]); s[b] = cc_rotl(kk_xor(s[b], s[c]) % 4294967296, 12)
+    s[a] = cc_add(s[a], s[b]); s[d] = cc_rotl(kk_xor(s[d], s[a]) % 4294967296, 8)
+    s[c] = cc_add(s[c], s[d]); s[b] = cc_rotl(kk_xor(s[b], s[c]) % 4294967296, 7)
+end
+local function cc_block(key, counter, nonce)
+    local s = { 1634760805, 857760878, 2036477234, 1797285236,
+        key[1], key[2], key[3], key[4], key[5], key[6], key[7], key[8],
+        counter, nonce[1], nonce[2], nonce[3] }
+    local w = {}
+    for i = 1, 16 do w[i] = s[i] end
+    for _ = 1, 10 do
+        cc_qr(w, 1, 5, 9, 13); cc_qr(w, 2, 6, 10, 14); cc_qr(w, 3, 7, 11, 15); cc_qr(w, 4, 8, 12, 16)
+        cc_qr(w, 1, 6, 11, 16); cc_qr(w, 2, 7, 12, 13); cc_qr(w, 3, 8, 9, 14); cc_qr(w, 4, 5, 10, 15)
+    end
+    for i = 1, 16 do w[i] = cc_add(w[i], s[i]) end
+    return w
+end
+local function cc_derive(fog)
+    local nf = #fog
+    local state = 2166136261
+    for i = 1, nf do state = (state + fog[i] * 16777619) % 4294967296; state = (state * 48271) % 4294967296 end
+    local bytes = {}
+    for i = 1, 44 do state = (state * 1103515245 + 12345) % 4294967296; bytes[i] = kk_floor(state / 65536) % 256 end
+    local function word(o) return bytes[o] + bytes[o + 1] * 256 + bytes[o + 2] * 65536 + bytes[o + 3] * 16777216 end
+    local key, nonce = {}, {}
+    for i = 1, 8 do key[i] = word((i - 1) * 4 + 1) end
+    for i = 1, 3 do nonce[i] = word(32 + (i - 1) * 4 + 1) end
+    return key, nonce, 1
+end
+-- Fill mask[1..n] with the ChaCha20 keystream for the fog-derived key/nonce.
+local function cc_fill(mask, fog, n)
+    local key, nonce, counter = cc_derive(fog)
+    local produced = 0
+    while produced < n do
+        local w = cc_block(key, counter, nonce)
+        for i = 1, 16 do
+            local v = w[i]; local base = produced + (i - 1) * 4
+            if base + 1 <= n then mask[base + 1] = v % 256 end
+            if base + 2 <= n then mask[base + 2] = kk_floor(v / 256) % 256 end
+            if base + 3 <= n then mask[base + 3] = kk_floor(v / 65536) % 256 end
+            if base + 4 <= n then mask[base + 4] = kk_floor(v / 16777216) % 256 end
+        end
+        produced = produced + 64; counter = (counter + 1) % 4294967296
+    end
+end
+
 local OP = RegBytecode.OP
 
 local Runtime = {}
@@ -88,13 +144,16 @@ function Runtime.run(program, options)
     -- detection, after which numeric arithmetic results are offset by `hp`.
     local hp = 0
 
-    -- Per-position keystream mask, derived once at VM start (portable all-integer
-    -- math; matches the encoder in reg-bytecode.encode_opaque byte-for-byte).
-    local ks_key = 5381
-    for i = 1, nfog do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
+    -- Keystream mask, derived once at VM start (portable all-integer math; matches
+    -- reg-bytecode.encode_opaque byte-for-byte). program.enc selects the real
+    -- ChaCha20 stream cipher; otherwise the legacy per-position hash keystream.
     local mask = {}
-    do
-        local slen = #S
+    local slen = #S
+    if program.enc then
+        cc_fill(mask, fog, slen)
+    else
+        local ks_key = 5381
+        for i = 1, nfog do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
         for i = 1, slen do
             local h = (i * 40503 + ks_key) % 4294967296
             h = (h * 65599 + 3266489917) % 4294967296
@@ -177,6 +236,28 @@ function Runtime.run(program, options)
     local sampler = kk_type(anchor) == "table" and kk_type(anchor.d) == "table"
         and kk_type(anchor.g) == "function"
     local sample_at = 1024
+
+    -- Startup tamper gate, bound INTO the interpreter itself (not a strippable
+    -- payload guard). program.m carries decisive executor/injector marker names
+    -- (assembled at build time; absent in unit builds). If a debug hook is already
+    -- installed, or any one marker is present in the host environment, it latches
+    -- the SAME silent honeypot drift the sampler uses: arithmetic results quietly
+    -- diverge, with no branded error to point an attacker at the check. Unwinding
+    -- and stripping the compiled-in anti-tamper payload still leaves this backstop.
+    local marks = program.m
+    if marks then
+        local tripped = false
+        if kk_type(anchor) == "table" and kk_type(anchor.g) == "function" then
+            local okh, hooked = kk_pcall(anchor.g)
+            if okh and hooked ~= nil then tripped = true end
+        end
+        if not tripped then
+            for mi = 1, #marks do
+                if globals[marks[mi]] ~= nil then tripped = true; break end
+            end
+        end
+        if tripped then hp = 1 + (steps % 3) end
+    end
 
     local execute_proto  -- forward
 

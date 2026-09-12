@@ -50,15 +50,31 @@ deobfuscator has to peel everything off:
 - Anti-tamper with executor + timing detection, runtime integrity, and a silent
   anti-hook **honeypot** in the VM: on tampering it diverts to a decoy result
   instead of a visible error, so an attacker who bypassed the first-line checks
-  sees plausible-but-wrong output with no tell
-- **Register VM backend**: opaque bytecode masked by a continuous position-keyed
-  keystream (no repeating-XOR to peel), **per-build polymorphic opcodes** (each
+  sees plausible-but-wrong output with no tell. A second tamper gate is bound
+  **into the interpreter itself**, so it cannot be stripped as a separate guard
+- **Register VM backend**: opaque bytecode encrypted with a real **ChaCha20**
+  stream cipher (RFC 8439, keyed per build), **per-build polymorphic opcodes** (each
   operation has several interchangeable codes, so the stream never maps 1:1 to a
   known VM), **superoperators** (adjacent operations fused into single opcodes), a
-  name-mangled interpreter, `coli_` markers, and **no `loadstring`**
+  name-mangled interpreter that comes **first** in the bundle, **decoy VM routes**
+  (dead false paths a deobfuscator must disprove), `coli_` markers, and **no
+  `loadstring`**
 - Cooperative auto-yield (`task.wait`) so heavy loops do not trip Roblox's
   execution-time limit
 - Output collapsed to a **single line**, and **every build is different**
+
+## Extra hardening flags (optional)
+
+```bash
+lua cli.lua --preset fortress --LuaU --bloat 6 --fibonacci --out output.lua input.lua
+```
+
+| Flag | Effect |
+|------|--------|
+| `--bloat N` | Amplify injected dead code (1-16, bounded so it still loads on Roblox). Default 1. |
+| `--fibonacci` | Carry the register-VM bytecode as bit-packed Fibonacci/Zeckendorf codewords. |
+| `--encrypt` / `--no-encrypt` | Toggle the ChaCha20 blob cipher (on by default here). |
+| `--vm-guard` / `--no-vm-guard` | Toggle the in-interpreter tamper gate (on by default here). |
 
 ## Backends (optional)
 

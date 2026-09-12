@@ -1,43 +1,58 @@
 # Colisseum Update Log
 
-Date: 2026-09-10
+Date: 2026-09-11
 
-## Register VM Hardening + Opaque Errors + Comment Hygiene
+## Real Cipher + Fibonacci Layer + In-VM Tamper Gate + False Paths
 
-A round of register-VM hardening (all per-build, semantics-preserving) plus a fix
-for design commentary leaking into shipped output.
+A large hardening pass on the register VM (the Fortress backend), plus a size/dead-
+code amplifier, a Fibonacci coding system, a new literal step, and richer, more
+developer-legible error codes. Everything below is per-build, semantics-preserving,
+and verified on both LuaJIT and Luau/Roblox.
 
 Changes:
-- **Keystream-masked bytecode** (`src/core/reg-bytecode.lua`, `reg-runtime.lua`):
-  the in-memory fog is no longer a short repeating-XOR key. Each byte is masked
-  with a per-position keystream (repeating fog byte XOR a per-offset hash), keyed
-  off the fog seed, so there is no small period to peel. Derived once at VM start;
-  the hot loop only does a table lookup. Portable all-integer math, byte-for-byte
-  round-trip.
-- **Polymorphic opcodes** (`reg-runtime.lua`, `src/steps/security/register-vm.lua`):
-  each operation gets several interchangeable raw codes chosen per instruction,
-  folded back by a per-build normalization table (`program.o`). The emitted stream
-  has no 1:1 opcode mapping. Backward-compatible (dev path sets no `program.o`).
-- **Superoperators** (`reg-bytecode.lua` `fuse` + `reg-runtime.lua` handlers +
-  `register-vm.lua` wiring): a peephole fuses adjacent straight-line pairs
-  (MOVE;MOVE, LOADK;LOADK, GETGLOBAL;GETGLOBAL) into single opcodes; the second
-  slot is kept as a jump-target fallback, so no jump-offset rewriting is needed.
-  New acceptance test `tests/reg_vm_superop_differential.lua` (13/13).
-- **Silent anti-hook honeypot** (`reg-runtime.lua`): the in-loop sampler no longer
-  throws the branded `0x2175` fingerprint; on tamper it latches a drift so
-  arithmetic results become wrong. Clean runs are bit-for-bit unaffected.
-- **Opaque coded errors** (`src/steps/anti/anti-tamper.lua`, `runtime-integrity.lua`,
-  `docs/ERROR_CODES.md`): anti-tamper now selects among 9 codes by cause and
-  runtime-integrity among 3, non-injectively (several causes share a code). The
-  tested `0x7A31`/`0x5C08` codes are preserved. `ERROR_CODES.md` rewritten to be
-  deliberately non-descriptive.
-- **Guard comment stripping**: `anti-tamper` and `runtime-integrity` now strip
-  their guard's comments before emission (blanking preserves line boundaries, so
-  the beautify detector is unaffected). Previously, in text presets where `minify`
-  runs before the guard, the entire commented template shipped verbatim. Repo
-  comments across the tree were also trimmed to short headers + small notes.
+- **Bounded bloat amplifier** (`--bloat N`, 1-16; `src/obfuscator.lua`): one knob
+  scales the injected dead code (all provably unreachable and syntactically
+  validated) across *every* preset. Each budget is clamped to a per-key ceiling, so
+  output grows large-but-finite and still loads under Roblox/Luau script-size and
+  parser limits. The per-step hard caps and source guards were raised to give the
+  amplifier headroom without removing the ceiling.
+- **Fibonacci (Zeckendorf) coding system** (`src/core/fibonacci.lua`,
+  `--fibonacci`): a self-delimiting integer/byte codec (greedy Zeckendorf
+  decomposition, usage bits + terminal `1`). The register-VM bytecode blob can be
+  carried as bit-packed Fibonacci codewords -- re-encoding every numeric constant,
+  operand, and offset -- and is rebuilt once at VM start (the hot loop is untouched).
+- **Real ChaCha20 stream cipher on the register VM** (`src/core/chacha.lua`,
+  `--encrypt`, default in Fortress): the fogged bytecode blob is now XOR-masked with
+  an RFC 8439 ChaCha20 keystream (KAT-verified) instead of an ad-hoc hash keystream.
+  The keystream is derived from the per-build fog once at VM start, so the decoded
+  program still never materializes in memory and the hot loop is unchanged.
+- **In-interpreter tamper gate** (`src/core/reg-runtime.lua`, `--vm-guard`, default
+  in Fortress): a startup scan bound INTO the interpreter (not a strippable payload
+  guard) latches the silent honeypot drift if a debug hook is installed or a decisive
+  executor/injector marker is present -- so results quietly diverge, with no branded
+  error to point at the check, and unwinding the compiled-in anti-tamper still leaves
+  this backstop.
+- **VM-first layout + false paths** (`src/steps/security/register-vm.lua`): the
+  bundle now opens with the interpreter itself and shuffles the payload/env locals
+  together with the decoy noise, so there is no leading junk prologue to strip and no
+  contiguous VM block to lift. Added **decoy VM routes**: dead, provably-false
+  branches carrying payload-shaped blobs, a decoy integrity checksum, a branded abort
+  code, and a `pcall`-wrapped decoy `R.run` -- a deobfuscator now sees several `.run`
+  calls and blobs to disprove, at zero runtime cost.
+- **New `numeric-fibonacci` step** (`src/steps/literals/numeric-fibonacci.lua`):
+  rewrites bounded integer literals as indexed reads from a pool decoded once at load
+  from Fibonacci codewords (every codeword self-checked at build time). Registered in
+  the catalog; opt-in (kept out of Fortress by default because pooling many codeword
+  strings ahead of the string-encryption steps bloats the payload).
+- **More, clearer error codes** (`src/steps/anti/anti-tamper.lua`,
+  `docs/ERROR_CODES.md`): the coded aborts were expanded and regrouped into three
+  developer-facing classes (hostile host / modified runtime / payload-build) with
+  actionable guidance, while still not naming the exact internal check. The tested
+  codes (`0x7A31`, `0x5C08`, `0x3E9D`) are preserved.
 
 Verified: full suite green -- reg_vm_differential 60/60, reg_vm_superop_differential
-13/13, run 9/9, differential 6/6, vm_coverage 29/29, adversarial 7/7, security
-254/254, fuzz 365/365. All 7 presets produce output identical to reference on the
-local Luau build, with no `load`/`loadstring` invocation.
+13/13, reg_vm_encrypt 9/9 (incl. ChaCha20 RFC 8439 KAT), reg_vm_tamper 4/4,
+reg_vm_fibonacci 10/10, fibonacci 10016, numeric_fibonacci 16/16, run 9/9,
+differential 6/6, vm_coverage 29/29, adversarial 7/7, security 254/254, fuzz 365/365,
+Luau smoke green. All presets run identically on the local Luau build, with no
+`load`/`loadstring` invocation.

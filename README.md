@@ -34,18 +34,26 @@ Colisseum is under active development. Its not finished yet lolz
   integrity and anti-tamper checks, and layered payload encryption.
 - **Register VM backend** | the `Fortress` (and `Secure`) path compiles the script
   to an embedded, per-build-unique register VM with a name-mangled interpreter and
-  no `loadstring`. Its bytecode is masked by a continuous position-keyed keystream
-  (no repeating-XOR to peel), its opcodes are **polymorphic** — each operation has
+  no `loadstring`. Its bytecode is encrypted with a real **ChaCha20** stream cipher
+  (RFC 8439, keyed per build), its opcodes are **polymorphic** — each operation has
   several interchangeable codes, so the instruction stream never maps 1:1 to a known
-  VM — and adjacent operations are fused into **superoperators**. Encoding, opcode
-  set, and layout all differ on every build.
+  VM — and adjacent operations are fused into **superoperators**. The interpreter
+  comes first in the bundle and its setup is interleaved with **decoy VM routes**
+  (dead, payload-shaped false paths a deobfuscator must disprove). Encoding, opcode
+  set, cipher key, and layout all differ on every build. Optionally the blob is also
+  carried as bit-packed **Fibonacci/Zeckendorf** codewords (`--fibonacci`).
+- **Tunable dead code** | `--bloat N` (1-16) amplifies the injected, provably
+  unreachable dead code across every preset — large but bounded, so output still
+  loads under Roblox/Luau size limits.
 - **Runtime-safe** | heavy decode loops yield cooperatively, so large scripts do
   not trip the Roblox execution-time watchdog ("exhausted allowed execution time").
 - **Tamper aware** | the output detects debug hooks, replaced globals, and
   executor / injector environments. The first-line guards abort with an opaque,
-  coded error whose code does not identify the check that fired
-  (see [docs/ERROR_CODES.md](docs/ERROR_CODES.md)); the register VM instead diverts
-  silently to a decoy result rather than announcing the detection.
+  coded error whose code identifies only a broad *class* of problem, not the check
+  that fired (see [docs/ERROR_CODES.md](docs/ERROR_CODES.md)). The register VM binds
+  an extra tamper gate **into the interpreter itself** and diverts silently to a
+  wrong result rather than announcing the detection, so it cannot be stripped as a
+  separate guard.
 - **Verified output** | every build is re-validated to remain syntactically
   correct and runnable.
 
@@ -71,6 +79,17 @@ lua cli.lua --preset Full --secure --LuaU --out output.lua input.lua
 
 See [SETUP.md](SETUP.md) for full setup and usage.
 
+### Hardening flags
+
+These refine the `Fortress`/register-VM path (all optional):
+
+| Flag | Effect |
+| ---- | ------ |
+| `--bloat N` | Amplify injected dead code across every preset (1-16, bounded). Default 1. |
+| `--fibonacci` (`--fib`) | Carry the register-VM bytecode as bit-packed Fibonacci/Zeckendorf codewords. |
+| `--encrypt` / `--no-encrypt` | Toggle the register VM's ChaCha20 stream cipher (on by default in `Fortress`). |
+| `--vm-guard` / `--no-vm-guard` | Toggle the in-interpreter tamper gate (on by default in `Fortress`). |
+
 ### Presets
 
 | Preset   | Protection |
@@ -80,7 +99,7 @@ See [SETUP.md](SETUP.md) for full setup and usage.
 | `Hard`   | Medium, with added dead-code, decoy functions, opaque predicates, and structural noise. |
 | `Full`   | Maximum standard protection, including layered payload encryption and a runtime wrapper. |
 | `Total`  | Full, with control-flow flattening, string pooling / splitting, and extra protection layers. |
-| `Fortress` | Every static layer, applied in two re-randomized waves, feeding the register VM backend (polymorphic opcodes, superoperators, keystream-masked bytecode, silent anti-hook honeypot). Runs on Lua and Luau/Roblox with no `loadstring`. |
+| `Fortress` | Every static layer, applied in two re-randomized waves, feeding the register VM backend (polymorphic opcodes, superoperators, **ChaCha20-encrypted** bytecode, an **in-interpreter tamper gate**, and **decoy VM routes**). Runs on Lua and Luau/Roblox with no `loadstring`. |
 | `Secure` | Full-level protection packaged to Luau bytecode via the bundled toolchain (`--secure`). |
 
 Heavier presets trade size and startup for protection: `Easy`/`Medium`/`Hard`

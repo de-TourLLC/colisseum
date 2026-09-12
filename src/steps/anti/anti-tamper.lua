@@ -114,16 +114,23 @@ do
     -- and non-injective (several causes share a code), so a code never identifies
     -- the check that fired.
     local _at_prefix = "ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x"
+    -- Codes are grouped by CLASS (documented in docs/ERROR_CODES.md) so a legitimate
+    -- developer can tell WHAT KIND of thing tripped -- a hostile host, an edited/
+    -- hooked runtime, or a build/integrity mismatch -- and act on it, without the
+    -- code naming the exact internal check. Several causes in a class still share a
+    -- code (so the map is not fully invertible), and the class prefix is stable.
     local _at_codes = {
-        ["internal-integrity"] = "7A31", ["source-reformatted"] = "7A31",
-        ["debug-hook"] = "3E19", ["debug-api-replacement"] = "3E19",
-        ["executor-signature"] = "6B0C", ["executor-marker"] = "6B0C",
-        ["protected-global-replacement"] = "41D7", ["global-replacement"] = "41D7",
-        ["environment-divergence"] = "41D7",
-        ["non-native-core-functions"] = "5D33",
-        ["stdlib-function-hook"] = "2A88", ["stdlib-non-native"] = "2A88",
-        ["string-metatable-swap"] = "1F4E", ["global-metatable-interception"] = "1F4E",
+        -- Hostile-host class (executor / injector / debugger / instrumentation).
+        ["debug-hook"] = "3E19", ["debug-api-replacement"] = "3E44",
+        ["executor-signature"] = "6B0C", ["executor-marker"] = "6B77",
         ["loader-replacement"] = "7C56", ["timing-anomaly"] = "0D91",
+        -- Modified-runtime class (globals / stdlib / metatables / layout changed).
+        ["internal-integrity"] = "7A31", ["source-reformatted"] = "9C12",
+        ["protected-global-replacement"] = "41D7", ["global-replacement"] = "41A2",
+        ["environment-divergence"] = "58E0",
+        ["non-native-core-functions"] = "5D33",
+        ["stdlib-function-hook"] = "2A88", ["stdlib-non-native"] = "2AF1",
+        ["string-metatable-swap"] = "1F4E", ["global-metatable-interception"] = "1FB9",
     }
     local function _at_pick(_at_rs)
         if _at_type(_at_rs) ~= "table" then return "7A31" end

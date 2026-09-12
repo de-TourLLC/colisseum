@@ -15,7 +15,7 @@ local function banner()
     +#+        +#+    +:+ +#+            +#+    +#++:++#++ +#++:++#++ +#++:++#   +#+    +:+ +#+  +:+  +#+
     +#+        +#+    +#+ +#+            +#+           +#+        +#+ +#+        +#+    +#+ +#+       +#+
     #+#    #+# #+#    #+# #+#            #+#    #+#    #+# #+#    #+# #+#        #+#    #+# #+#       #+#
-    ########   ########  ########## ########### ########   ########  ##########  ########  ###       ### ]]
+    ########   ########  ########## ########### ########   ########  ##########  ########   ###       ### ]]
     if os.getenv("NO_COLOR") then
         io.stderr:write(art, "\n\n")
         return
@@ -44,6 +44,8 @@ local function usage()
     io.stderr:write("  Fortress = maximum client hardening on the fast register VM (Lua + Luau/Roblox); every static layer + encrypted, permuted, name-mangled bytecode.\n")
     io.stderr:write("  --bloat N (1-16) amplifies injected dead code across every preset. Big but bounded, so output still loads under Roblox/Luau size limits. Default 1.\n")
     io.stderr:write("  --fibonacci (--fib) carries the register-VM bytecode as bit-packed Fibonacci/Zeckendorf codewords (register backend). Adds a one-time decode at VM start.\n")
+    io.stderr:write("  --encrypt / --no-encrypt toggles the register VM's real ChaCha20 stream cipher over the bytecode blob (on by default in Fortress).\n")
+    io.stderr:write("  --vm-guard / --no-vm-guard toggles the interpreter-bound tamper gate (executor/debug-hook detection latches a silent drift; on by default in Fortress).\n")
     io.stderr:write("  lua cli.lua --preset <name> --batch --out <output-dir> file1.lua file2.lua ...\n")
     io.stderr:write("  backends: native (default) = tree-walking VM; register = faster register VM (2-6x); both run on\n")
     io.stderr:write("            Lua and Luau/Roblox with no compiler. fiu = real Luau bytecode VM for full Luau syntax (needs --LuaU + compiler).\n")
@@ -85,6 +87,14 @@ while index <= #arg do
         arguments.bloat = tonumber(required_value(value))
     elseif value == "--fibonacci" or value == "--fib" then
         arguments.fibonacci = true
+    elseif value == "--encrypt" then
+        arguments.encrypt = true
+    elseif value == "--no-encrypt" then
+        arguments.encrypt = false
+    elseif value == "--vm-guard" then
+        arguments.tamperVM = true
+    elseif value == "--no-vm-guard" then
+        arguments.tamperVM = false
     elseif value == "--batch" then
         arguments.batch = true
     elseif value == "--jobs" then
@@ -176,6 +186,63 @@ local TIPS = {
     "Mixing the bytecode like a DJ",
     "Setting little traps for the curious",
     "Teaching the reverse-engineer some humility",
+    "ChaCha20 keystream go brrr",
+    "Zeckendorf says hi to your decompiler",
+    "Fibonacci-coding your secrets: 1, 2, 3, 5, 8...",
+    "Planting decoy VMs like landmines",
+    "Five fake .run() calls, one is real, good luck",
+    "The tamper gate is watching you",
+    "Silent drift armed: wrong answers only",
+    "Executor detected? enjoy your garbage output",
+    "Shuffling the deck so nothing lines up",
+    "Every constant is now a Fibonacci puzzle",
+    "Interleaving junk so you can't cut it out",
+    "The VM moved to the front, good luck finding it",
+    "Byte soup, extra opaque",
+    "Polymorphic opcodes: 255 ways to say MOVE",
+    "Superoperators fused, no seams to grab",
+    "Your IDA database just doubled in size",
+    "Ghidra is not ready for this one",
+    "Poisoning the well, quietly",
+    "Decoy checksums, all lies",
+    "Reformat this and it dies",
+    "Beautifier detected, self-destruct armed",
+    "One physical line to rule them all",
+    "Dead code so alive it hurts",
+    "Making the skid google 'how to deobfuscate'",
+    "Turning your script into abstract art",
+    "The honeypot is sweeter than you think",
+    "Fog rolling over the bytecode",
+    "No loadstring, no problem",
+    "Compiling spite into registers",
+    "This build is legally distinct from the last one",
+    "Adding a fifth layer for good measure",
+    "The register VM says no",
+    "Encrypting the encryption's encryption",
+    "Scattering breadcrumbs that lead nowhere",
+    "Your patch will be silently ignored",
+    "Keystream masked, period-free",
+    "Zero plaintext, all vibes",
+    "Building something you can't un-build",
+    "The decompiler filed for PTO",
+    "Serving obfuscation, hold the readability",
+    "Numbers hidden behind golden-ratio math",
+    "If it were easy everyone would crack it",
+    "Wrapping evil in more evil",
+    "Sprinkling tripwires like confetti",
+    "This is not the .run() you're looking for",
+    "Mangling names past all recognition",
+    "Cranking the paranoia up to 16",
+    "Hardened, salted, and sealed",
+    "Fibonacci, ChaCha, and pure spite",
+    "Good luck, and touch grass afterwards",
+    "Cooking the bytecode low and slow",
+    "Somewhere a cracker just rage-quit",
+    "Every build ships with free confusion",
+    "The anti-tamper never sleeps",
+    "Bending control flow into a pretzel",
+    "Hiding the real path in plain sight",
+    "Eat crayons, poop rainbows.",
 }
 local last_tip
 local function pick_tip()
@@ -198,7 +265,10 @@ local function progress(fraction, label)
     prog_start = prog_start or now
     if not fraction or fraction < 0 then fraction = 0 elseif fraction > 1 then fraction = 1 end
     local done = label == "done" or fraction >= 1
-    if not cur_tip or now - tip_at > 1.1 then cur_tip = pick_tip(); tip_at = now end
+    -- Rotate the tip on a ~2s wall-clock timer only -- NOT on every progress update.
+    -- The bar/percentage/spinner still redraw on each call; the tip holds until 2s
+    -- pass, so it is decoupled from how fast the percentage moves.
+    if not cur_tip or now - tip_at >= 2 then cur_tip = pick_tip(); tip_at = now end
     spin_i = (spin_i % #SPIN) + 1
     local width = 26
     local filled = math.floor(width * fraction + 0.5)
@@ -260,6 +330,8 @@ local function obfuscate_source(source)
                 fiu = arguments.fiu,
                 bloat = arguments.bloat,
                 fibonacci = arguments.fibonacci,
+                encrypt = arguments.encrypt,
+                tamperVM = arguments.tamperVM,
                 compiler_options = { roblox = arguments.roblox },
                 on_progress = progress
             })
@@ -269,6 +341,8 @@ local function obfuscate_source(source)
             target = arguments.luau and "luau" or "lua",
             bloat = arguments.bloat,
             fibonacci = arguments.fibonacci,
+            encrypt = arguments.encrypt,
+            tamperVM = arguments.tamperVM,
             on_progress = progress
         })
         return transformed

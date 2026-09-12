@@ -214,7 +214,7 @@ local function bi32(out, n)
     out[#out + 1] = char(floor(n / 16777216) % 256)
 end
 
-function RegBytecode.encode_opaque(mainproto, fog)
+function RegBytecode.encode_opaque(mainproto, fog, encrypt)
     fog = fog or { 0 }
     -- Assign region ids in pre-order: main = 0, children in encounter order.
     local region_of, id_to_proto, next_id = {}, {}, 0
@@ -271,22 +271,32 @@ function RegBytecode.encode_opaque(mainproto, fog)
     end
 
     local raw = concat(buf)
-    -- Mask the byte stream with a per-position keystream (repeating fog byte XOR a
-    -- per-offset hash) keyed off the fog seed. Portable all-integer math; the
-    -- reg-runtime decoder mirrors this byte-for-byte.
-    local nf = #fog
-    local ks_key = 5381
-    for i = 1, nf do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
-    local function ks_mask(i)
-        local h = (i * 40503 + ks_key) % 4294967296
-        h = (h * 65599 + 3266489917) % 4294967296
-        h = (h + floor(h / 65536)) % 4294967296
-        h = (h * 40503) % 4294967296
-        return bxor(fog[(i - 1) % nf + 1], floor(h / 7) % 256)
-    end
     local out_b = {}
-    for i = 1, #raw do
-        out_b[i] = char(bxor(byte(raw, i), ks_mask(i)))
+    if encrypt then
+        -- Real ChaCha20 stream cipher: the byte stream is XORed with an RFC 8439
+        -- ChaCha20 keystream keyed off the per-build fog. The reg-runtime decoder
+        -- derives the identical keystream (round-trip verified by the differential
+        -- and reg_vm_fibonacci/encrypt suites). Keystream generated once; no small
+        -- period to peel and no cheap per-byte hash to shortcut.
+        local ChaCha = require("src.core.chacha")
+        local key, nonce, ctr = ChaCha.derive(fog)
+        local ks = ChaCha.keystream(key, nonce, ctr, #raw)
+        for i = 1, #raw do out_b[i] = char(bxor(byte(raw, i), ks[i])) end
+    else
+        -- Legacy per-position keystream (repeating fog byte XOR a per-offset hash)
+        -- keyed off the fog seed. Portable all-integer math; the reg-runtime decoder
+        -- mirrors this byte-for-byte.
+        local nf = #fog
+        local ks_key = 5381
+        for i = 1, nf do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
+        local function ks_mask(i)
+            local h = (i * 40503 + ks_key) % 4294967296
+            h = (h * 65599 + 3266489917) % 4294967296
+            h = (h + floor(h / 65536)) % 4294967296
+            h = (h * 40503) % 4294967296
+            return bxor(fog[(i - 1) % nf + 1], floor(h / 7) % 256)
+        end
+        for i = 1, #raw do out_b[i] = char(bxor(byte(raw, i), ks_mask(i))) end
     end
     raw = concat(out_b)
     return raw, out

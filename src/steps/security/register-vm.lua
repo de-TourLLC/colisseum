@@ -91,7 +91,30 @@ function Step.apply(source, options)
     local nfog = prng:range(6, 10)
     local fog = {}
     for i = 1, nfog do fog[i] = prng:range(0, 255) end
-    local blob, regs = RegBytecode.encode_opaque(mainproto, fog)
+    -- Real ChaCha20 stream cipher over the blob (opt-in; default in fortress). The
+    -- runtime derives the identical RFC 8439 keystream from the fog and un-masks on
+    -- demand, so the decoded program still never materializes in memory.
+    local enc_field = ""
+    if options.encrypt then enc_field = ",enc=1" end
+    -- Interpreter-bound tamper gate (opt-in; default in fortress). Decisive
+    -- executor/injector marker names travel escaped (byte-by-byte, the same standard
+    -- Environment uses for sensitive names -- no plaintext "getgenv" in the bundle);
+    -- reg-runtime latches the silent honeypot drift if any one is present at start,
+    -- so the anti-tamper response lives IN the VM, not only in the compiled payload.
+    local m_field = ""
+    if options.tamperVM then
+        local marks = {
+            "getgenv", "getrenv", "getsenv", "identifyexecutor", "getexecutorname",
+            "KRNL_LOADED", "SYNAPSE_LOADED", "PROTOSMASHER_LOADED", "secure_load",
+            "is_synapse_function", "syn_context_get", "is_sirhurt_closure", "fluxus", "getgc",
+        }
+        local esc = {}
+        for i = 1, #marks do
+            esc[i] = '"' .. marks[i]:gsub(".", function(c) return string.format("\\%03d", c:byte()) end) .. '"'
+        end
+        m_field = ",m={" .. table.concat(esc, ",") .. "}"
+    end
+    local blob, regs = RegBytecode.encode_opaque(mainproto, fog, options.encrypt)
     -- Optional Fibonacci (Zeckendorf) blob layer: carry the fogged byte stream as a
     -- bit-packed sequence of self-delimiting Fibonacci codewords (every numeric
     -- constant, operand, and offset in the blob is thereby re-encoded). The runtime
@@ -258,11 +281,13 @@ function Step.apply(source, options)
                 ")%" .. decoy_mod() .. " " .. sink .. "=" .. sink .. "-" .. sink
         end,
     }
-    local function noise_prologue()
+    local function noise_blocks()
         -- Build a mixed pool of decoys, then shuffle so the emission order is not a
         -- fixed functions->predicates->stages sequence. Both the *shapes* (above)
         -- and their *order* now vary per build, so a scanner cannot key on either
-        -- a recurring body pattern or a recurring block layout.
+        -- a recurring body pattern or a recurring block layout. Returns the list so
+        -- the caller can interleave the decoys among the real VM setup statements
+        -- (rather than emit them as one contiguous, strippable prologue block).
         local pool = {}
         for _ = 1, noise_prng:range(2, 4) do pool[#pool + 1] = noise_prng:pick(fn_shapes)() end
         for _ = 1, noise_prng:range(2, 4) do pool[#pool + 1] = noise_prng:pick(pred_shapes)() end
@@ -271,25 +296,101 @@ function Step.apply(source, options)
             local jj = noise_prng:range(1, ii)
             pool[ii], pool[jj] = pool[jj], pool[ii]
         end
-        return table.concat(pool, " ")
+        return pool
     end
 
     report(0.92, "vm:finishing")
     local Environment = require("src.steps.security.environment")
     local R, S, F, G, E, A, V, O = prefix .. "R", prefix .. "S", prefix .. "F", prefix .. "G", prefix .. "E", prefix .. "A", prefix .. "V", prefix .. "O"
-    local bundle = table.concat({
-        noise_prologue(),
-        "local " .. R .. "=(function()", runtime_src, "end)()",
+    -- Layout: the VM interpreter comes FIRST -- the bundle opens with the runtime
+    -- itself, not a decoy prologue, so a deobfuscator cannot treat a leading junk
+    -- block as "skip to the real code" and lift the VM out. The payload/env locals
+    -- and the decoy noise are all independent statements that only have to precede
+    -- the run; they are shuffled together so the VM setup is not one contiguous,
+    -- liftable region framed by strippable junk. Lua requires the chunk's `return`
+    -- to be last, so the run + return stay at the tail.
+    local head = "local " .. R .. "=(function()\n" .. runtime_src .. "\nend)()"
+    local mids = {
         "local " .. S .. "=" .. blob_literal,
         "local " .. F .. "=" .. fog_literal,
         "local " .. G .. "=" .. regs_literal,
         "local " .. O .. "=" .. norm_literal,
         "local " .. E .. "=" .. Environment.expression(),
         "local " .. A .. "=" .. Environment.anchor(),
-        -- yield_interval: on Roblox, breathe (task.wait) every ~1M VM instructions
-        -- when it is safe to yield, so heavy synchronous loops do not hit the
-        -- execution-time limit. No-op where no scheduler exists.
-        "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G .. ",o=" .. O .. fib_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})",
+    }
+    -- Decoy VM routes ("false paths"): each is a self-contained block of payload-
+    -- shaped locals (a random blob string + fog/region/norm that look like the real
+    -- ones) plus a dead branch, guarded by a provably-false predicate, that pcall-
+    -- wraps a decoy R.run over them. A deobfuscator now sees SEVERAL `.run` calls and
+    -- SEVERAL payload blobs and must analyse each to decide which one is real -- yet
+    -- runtime cost is zero (the guard never passes, and the call is pcall-wrapped
+    -- even if analysis forces it). This adds analysis routes without adding runtime.
+    do
+        -- Decoy error codes: these NEVER fire (their branches are provably dead), but
+        -- a deobfuscator reading the bundle sees many branded aborts with distinct
+        -- codes that look like live integrity failures, indistinguishable from the
+        -- real guards. Non-injective and per-build shuffled, so they add no signal.
+        local decoy_codes = {
+            "8F2A", "4C71", "9D05", "B3E8", "2F19", "6A44", "0E7C", "C1B2",
+            "53AF", "1A6D", "E409", "7B3C", "A0F5", "36D8", "D71E", "4820",
+        }
+        -- Same branded prefix the real guards use, so decoy aborts are byte-identical.
+        local brand = "ᴄᴏʟɪѕѕᴇᴜᴍ ︱ Oh Noes!, An error ocurred: 0x"
+        local function decoy_blob()
+            local n = noise_prng:range(220, 560)
+            local bytes = {}
+            for i = 1, n do bytes[i] = string.format("\\%03d", noise_prng:range(0, 255)) end
+            return '"' .. table.concat(bytes) .. '"'
+        end
+        -- A plausible-but-fake region map, shaped like a real one so a decoy cannot
+        -- be told apart by a fixed `c=0,d=1` fingerprint. Never executed.
+        local function decoy_regions()
+            local offs = {}
+            for i = 1, noise_prng:range(0, 4) do offs[i] = tostring(noise_prng:range(1, 400)) end
+            return "{[0]={n=" .. noise_prng:range(0, 3) .. ",v=" .. noise_prng:range(0, 1) ..
+                ",k=" .. noise_prng:range(0, 8) .. ",c=" .. noise_prng:range(4, 48) ..
+                ",d=" .. noise_prng:range(1, 60) .. ",o={" .. table.concat(offs, ",") ..
+                "},p={},u={}}}"
+        end
+        for _ = 1, noise_prng:range(2, 4) do
+            local ds, df = decoy_ident(), decoy_ident()
+            local dg, don, ck = decoy_ident(), decoy_ident(), decoy_ident()
+            local guard = noise_prng:range(2, 9000)
+            local code = noise_prng:pick(decoy_codes)
+            local mod = tostring(noise_prng:range(2147483629, 2147483647))
+            local seed0 = tostring(noise_prng:range(1, 2147483646))
+            local expect = tostring(noise_prng:range(1, 2147483646))
+            local fogn = {}
+            for i = 1, noise_prng:range(4, 8) do fogn[i] = tostring(noise_prng:range(0, 255)) end
+            -- A decoy integrity route: a per-build checksum function, a comparison
+            -- that "verifies" the decoy blob against a baked digest and aborts with a
+            -- branded code, then a decoy VM run -- all inside a provably-false guard,
+            -- so it is inert (and the run is pcall-wrapped even if analysis forces it).
+            mids[#mids + 1] =
+                "local " .. ds .. "=" .. decoy_blob() ..
+                " local " .. df .. "={" .. table.concat(fogn, ",") .. "}" ..
+                " local " .. dg .. "=" .. decoy_regions() ..
+                " local " .. don .. "={}" ..
+                " local function " .. ck .. "(_s) local _h=" .. seed0 ..
+                " for _q=1,#_s do _h=(_h*31+_s:byte(_q))%" .. mod .. " end return _h end" ..
+                " if (" .. tostring(guard) .. "*0)~=0 then" ..
+                " if " .. ck .. "(" .. ds .. ")~=" .. expect ..
+                ' then error("' .. brand .. code .. '",0) end' ..
+                " local " .. decoy_ident() .. "=pcall(function() return " .. R ..
+                ".run({S=" .. ds .. ",f=" .. df .. ",r=" .. dg .. ",o=" .. don .. "},{}) end) end"
+        end
+    end
+    for _, decoy in ipairs(noise_blocks()) do mids[#mids + 1] = decoy end
+    for i = #mids, 2, -1 do local j = noise_prng:range(1, i); mids[i], mids[j] = mids[j], mids[i] end
+    -- yield_interval: on Roblox, breathe (task.wait) every ~1M VM instructions when
+    -- it is safe to yield, so heavy synchronous loops do not hit the execution-time
+    -- limit. No-op where no scheduler exists.
+    local run_stmt = "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G ..
+        ",o=" .. O .. fib_field .. enc_field .. m_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})"
+    local bundle = table.concat({
+        head,
+        table.concat(mids, "\n"),
+        run_stmt,
         "return " .. V .. "[1]," .. V .. "[2]," .. V .. "[3]," .. V .. "[4]",
     }, "\n")
     -- Collapse to a single line. The only newlines are statement separators; the

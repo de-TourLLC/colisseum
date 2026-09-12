@@ -133,7 +133,7 @@ local presets = {
         { "junk-comments", { density = 0.22, max_bytes = 16384 } },
         { "rename", { } },
         { "minify", { } },
-        { "vm", { backend = "register" } }
+        { "vm", { backend = "register", encrypt = true, tamperVM = true } }
     },
     -- "secure" is the recommended production preset: everything "hard" provides
     -- plus split/constant-array pooling of string literals and a runtime
@@ -266,6 +266,15 @@ function Obfuscator.obfuscate(source, options)
         if options.fibonacci and name == "vm" and settings.fibonacci == nil then
             settings.fibonacci = true
         end
+        -- Explicit build-wide encrypt toggle overrides the preset default (fortress
+        -- ships encrypt=true); nil leaves the preset's own setting intact.
+        if name == "vm" and options.encrypt ~= nil then
+            settings.encrypt = options.encrypt
+        end
+        -- Same for the interpreter-bound tamper gate (fortress ships tamperVM=true).
+        if name == "vm" and options.tamperVM ~= nil then
+            settings.tamperVM = options.tamperVM
+        end
         -- Let the (slow) VM backend report sub-phase progress within its weighted
         -- share, so the bar and ETA keep moving during packaging.
         if report and name == "vm" then
@@ -332,6 +341,12 @@ function Obfuscator.package_luau(source, options)
         bloat = options.bloat,
         on_progress = options.on_progress
     })
+    -- The register backend encrypts its blob and arms the interpreter-bound tamper
+    -- gate by default; other backends only when asked. Explicit options win.
+    local encrypt = options.encrypt
+    if encrypt == nil then encrypt = (backend == "register") end
+    local tamperVM = options.tamperVM
+    if tamperVM == nil then tamperVM = (backend == "register") end
     return load_step("vm").apply(transformed, {
         target = target,
         backend = backend,
@@ -339,6 +354,8 @@ function Obfuscator.package_luau(source, options)
         compiler = options.compiler,
         fiu = options.fiu,
         fibonacci = options.fibonacci,
+        encrypt = encrypt,
+        tamperVM = tamperVM,
         compiler_options = options.compiler_options
     })
 end

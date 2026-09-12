@@ -210,6 +210,7 @@ local extra = {
     { "resource-budget-guard", "Rejects source exceeding resource budgets." },
     { "semicolon-policy", "Applies a deterministic semicolon policy." },
     { "string-byte-encoding", "Encodes safe string literals with a local decoder." },
+    { "numeric-fibonacci", "Rewrites bounded integer literals as calls to an injected Fibonacci/Zeckendorf decoder." },
     { "string-termination-validation", "Validates string termination." },
     { "garbage-code", "Adds bounded unreachable local statements.", 3 },
     { "opaque-predicates", "Inserts bounded dead blocks guarded by opaque always-false predicates.", 3 },
