@@ -46,6 +46,7 @@ local function usage()
     io.stderr:write("  --fibonacci (--fib) carries the register-VM bytecode as bit-packed Fibonacci/Zeckendorf codewords (register backend). Adds a one-time decode at VM start.\n")
     io.stderr:write("  --encrypt / --no-encrypt toggles the register VM's real ChaCha20 stream cipher over the bytecode blob (on by default in Fortress).\n")
     io.stderr:write("  --vm-guard / --no-vm-guard toggles the interpreter-bound tamper gate (executor/debug-hook detection latches a silent drift; on by default in Fortress).\n")
+    io.stderr:write("  Every build checks GitHub for updates and asks before applying one; pass --no-update to skip. Updates only fast-forward a clean checkout, never discarding local work.\n")
     io.stderr:write("  lua cli.lua --preset <name> --batch --out <output-dir> file1.lua file2.lua ...\n")
     io.stderr:write("  backends: native (default) = tree-walking VM; register = faster register VM (2-6x); both run on\n")
     io.stderr:write("            Lua and Luau/Roblox with no compiler. fiu = real Luau bytecode VM for full Luau syntax (needs --LuaU + compiler).\n")
@@ -95,6 +96,8 @@ while index <= #arg do
         arguments.tamperVM = true
     elseif value == "--no-vm-guard" then
         arguments.tamperVM = false
+    elseif value == "--no-update" then
+        arguments.no_update = true
     elseif value == "--batch" then
         arguments.batch = true
     elseif value == "--jobs" then
@@ -367,6 +370,39 @@ end
 
 local function basename(path)
     return path:match("[^/\\]+$") or path
+end
+
+-- Automatic self-update check. Before every obfuscation (unless --no-update), do a
+-- live check of whether this git checkout is behind its GitHub origin and, if so,
+-- ask whether to fast-forward. Everything here is fail-safe (any error is swallowed
+-- and the build proceeds). It never discards local work: Updater.apply refuses on a
+-- dirty or diverged tree.
+if not arguments.no_update then
+    local ok_upd, Updater = pcall(require, "src.core.updater")
+    if ok_upd then
+        local ok_check, info = pcall(function()
+            -- Operate on this script's own repo, regardless of the caller's CWD.
+            Updater.configure(script_directory())
+            return Updater.check()
+        end)
+        if ok_check and info then
+            io.stderr:write((USE_COLOR and fg(grad(0.85)) or "") ..
+                string.format("A newer version of Colisseum is available (%d update%s behind).",
+                    info.behind, info.behind == 1 and "" or "s") ..
+                (USE_COLOR and RESET or "") .. "\n")
+            if info.latest ~= "" then io.stderr:write("  latest: " .. info.latest .. "\n") end
+            io.stderr:write("Update now? [y/N] ")
+            io.stderr:flush()
+            local answer = io.read("*l")
+            if answer and answer:lower():match("^%s*y") then
+                local applied, message = Updater.apply()
+                io.stderr:write(message .. "\n")
+                os.exit(applied and 0 or 1)
+            else
+                io.stderr:write("Continuing with the current version.\n")
+            end
+        end
+    end
 end
 
 if not arguments.batch then
