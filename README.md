@@ -7,6 +7,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg">
   <img alt="Targets" src="https://img.shields.io/badge/targets-Lua%20%7C%20Luau-informational.svg">
   <img alt="Status" src="https://img.shields.io/badge/status-active%20development-orange.svg">
+    <img alt="Biware" src="https://pride-badges.pony.workers.dev/static/v1?label=biware&labelColor=%23555&stripeWidth=8&stripeColors=D60270%2CD60270%2C9B4F96%2C0038A8%2C0038A8">
 </p>
 
 ---
