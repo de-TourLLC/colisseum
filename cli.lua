@@ -9,7 +9,7 @@ local function banner()
     -- Pure ASCII so it renders in every code page; colored as a vertical
     -- purple->white gradient (white at the top fading to purple at the bottom).
     local art = [[
-    ::::::::   ::::::::  :::        ::::::::::: ::::::::   ::::::::  :::::::::: :::    ::: ::::    ::::
+    ::::::::   ::::::::  :::        ::::::::::: ::::::::   ::::::::  ::::::::::  :::    ::: ::::    ::::
     :+:    :+: :+:    :+: :+:            :+:    :+:    :+: :+:    :+: :+:        :+:    :+: +:+:+: :+:+:+
     +:+        +:+    +:+ +:+            +:+    +:+        +:+        +:+        +:+    +:+ +:+ +:+:+ +:+
     +#+        +#+    +:+ +#+            +#+    +#++:++#++ +#++:++#++ +#++:++#   +#+    +:+ +#+  +:+  +#+
@@ -255,6 +255,25 @@ local function pick_tip()
     last_tip = t
     return t
 end
+
+-- Playful status verbs shown in place of "Obfuscating" now and then -- like the
+-- silly words Claude flashes while thinking. "Obfuscating" is weighted so it shows
+-- most of the time; all are <= 12 chars so the column width never shifts.
+local STATUS = {
+    "Obfuscating", "Obfuscating", "Obfuscating", "Obfuscating",
+    "Scrambling", "Mystifying", "Bamboozling", "Ciphering", "Tangling",
+    "Confuddling", "Hexing", "Vexing", "Muddling", "Puzzling", "Cloaking",
+    "Fogging", "Jumbling", "Conjuring", "Warping", "Snarling", "Befuddling",
+    "Perplexing", "Enigmifying", "Cursifying", "Noodling", "Spellbinding",
+    "Gremlinizing", "Scrooblifyin", "Skiddiproofn", "Voiding", '67ing'
+}
+local last_status
+local function pick_status()
+    local s
+    repeat s = STATUS[math.random(#STATUS)] until s ~= last_status
+    last_status = s
+    return s
+end
 local function fmt_time(sec)
     if not sec or sec < 0 then sec = 0 end
     if sec >= 60 then return string.format("%dm%02ds", math.floor(sec / 60), math.floor(sec % 60)) end
@@ -269,6 +288,7 @@ local SPIN_INTERVAL = 0.05
 local anim = {
     fraction = 0, label = "", started = nil,
     tip = nil, tip_at = -1, last_frame = -1,
+    status = nil, status_at = -1,
     drawing = false, done = false,
 }
 
@@ -282,10 +302,21 @@ local function draw()
     local fraction = anim.fraction
     if not fraction or fraction < 0 then fraction = 0 elseif fraction > 1 then fraction = 1 end
     local done = anim.done
-    -- Tip rotates on a ~2s clock timer, independent of the percentage.
-    if not anim.tip or now - anim.tip_at >= 2 then anim.tip = pick_tip(); anim.tip_at = now end
+    -- Tip rotates on a ~5s clock timer, independent of the percentage.
+    if not anim.tip or now - anim.tip_at >= 5 then anim.tip = pick_tip(); anim.tip_at = now end
+    -- Status word ("Obfuscating" and friends) swaps on its own ~3s timer.
+    if not anim.status or now - anim.status_at >= 3 then anim.status = pick_status(); anim.status_at = now end
     -- Spinner frame runs off the clock, independent of the percentage.
     local frame = math.floor(now / SPIN_INTERVAL) % #SPIN + 1
+    -- Slow "breathing" of the purple->white gradient: a gentle sine sway (~7s
+    -- period) shifts every gradient color up (whiter) and down (purpler) together,
+    -- so the whole theme gently rises and falls on its own.
+    local breathe = 0.28 * math.sin(now * 0.9)
+    local function gt(t)
+        t = t + breathe
+        if t < 0 then t = 0 elseif t > 1 then t = 1 end
+        return grad(t)
+    end
     local width = 26
     local filled = math.floor(width * fraction + 0.5)
     local pct = math.floor(fraction * 100 + 0.5)
@@ -296,23 +327,29 @@ local function draw()
     if done then name = "done" end
     if USE_COLOR then
         -- Bar: each filled cell is a purple->white gradient step; empty cells are a
-        -- dim purple (never black).
+        -- dim purple (never black). A bright glint sweeps across the filled portion
+        -- off the clock, so the bar stays alive even while the percentage sits still.
+        -- Two glint cells (a head + a softer trail) make the motion easy to follow.
+        local glint = (not done) and (math.floor(now / 0.07) % width) or -1
         local cells = {}
         for j = 1, width do
-            if j <= filled then cells[j] = fg(grad((j - 1) / (width > 1 and (width - 1) or 1))) .. BAR_ON
+            if j <= filled then
+                if (j - 1) == glint then cells[j] = fg(255, 255, 255) .. BAR_ON
+                elseif (j - 1) == glint - 1 then cells[j] = fg(236, 224, 255) .. BAR_ON
+                else cells[j] = fg(gt((j - 1) / (width > 1 and (width - 1) or 1))) .. BAR_ON end
             else cells[j] = fg(96, 66, 128) .. BAR_OFF end
         end
         io.stderr:write("\r",
-            (done and fg(200, 170, 255) or fg(grad(0.4))), (done and CHECK or SPIN[frame]), RESET, " ",
-            "\27[1m", fg(grad(0.85)), (done and "Done       " or "Obfuscating"), RESET, " ",
+            (done and fg(200, 170, 255) or fg(gt(0.4))), (done and CHECK or SPIN[frame]), RESET, " ",
+            "\27[1m", (done and fg(grad(0.85)) or fg(gt(0.85))), string.format("%-12s", done and "Done" or anim.status), RESET, " ",
             table.concat(cells), RESET, " ",
             "\27[1m", fg(255, 255, 255), string.format("%3d%%", pct), RESET, " ",
             fg(grad(0.55)), string.format("%-9s", timetext), RESET, " ",
             fg(grad(0.4)), string.format("%-22s", name), RESET, " ",
             fg(210, 180, 255), anim.tip, RESET, "\27[K")
     else
-        io.stderr:write(string.format("\r%s %-11s [%s%s] %3d%% %-9s %-22s %s   ",
-            done and "OK" or ">", done and "Done" or "Obfuscating",
+        io.stderr:write(string.format("\r%s %-12s [%s%s] %3d%% %-9s %-22s %s   ",
+            done and "OK" or ">", done and "Done" or anim.status,
             string.rep("#", filled), string.rep("-", width - filled), pct, timetext, name, anim.tip))
     end
     io.stderr:flush()
@@ -353,6 +390,41 @@ local function anim_start()
 end
 local function anim_stop()
     _G.__colisseum_tick = nil
+end
+
+-- Render a build failure as a clean, Python-traceback-style block: the progress
+-- line is cleared, then a separated red panel names the failing stage, the input,
+-- and the human-readable message (internal Lua chunk locations are stripped). This
+-- replaces the old behaviour where the raw error was glued onto the progress bar.
+local function render_error(message, context)
+    context = context or {}
+    local raw = tostring(message)
+    raw = raw:gsub("^colisseum:%s*", "")
+    -- Drop the internal Lua chunk location (e.g. ".\src\core\parser.lua:37: ").
+    raw = raw:gsub("^[%w%./\\_%-]+%.lua:%d+:%s*", "")
+    local at = raw:match("at%s+(%d+)%s*$")
+    local RED, DIM, BOLD = fg(235, 90, 90), fg(150, 120, 150), "\27[1m"
+    local rule = string.rep("\226\148\128", 56) -- ─
+    -- Clear the (carriage-returned) progress line, then open on a fresh line.
+    io.stderr:write(USE_COLOR and "\r\27[K\n" or "\n")
+    local function row(label, value)
+        if not value or value == "" then return end
+        if USE_COLOR then io.stderr:write(DIM, "    ", label, RESET, "  ", value, "\n")
+        else io.stderr:write("    ", label, "  ", value, "\n") end
+    end
+    if USE_COLOR then
+        io.stderr:write(RED, rule, RESET, "\n")
+        io.stderr:write("  ", BOLD, RED, "\226\156\150 Obfuscation failed", RESET, "\n\n")
+        io.stderr:write("  ", RED, raw, RESET, "\n\n")
+    else
+        io.stderr:write(rule, "\n")
+        io.stderr:write("  x Obfuscation failed\n\n")
+        io.stderr:write("  ", raw, "\n\n")
+    end
+    row("stage ", context.stage)
+    row("input ", context.input)
+    if at then row("at    ", "byte " .. at .. " of the generated source") end
+    io.stderr:write(USE_COLOR and (RED .. rule .. RESET .. "\n") or (rule .. "\n"))
 end
 
 -- Obfuscate one in-memory source string, returning (output, error). Loaded once
@@ -466,7 +538,7 @@ if not arguments.batch then
     end
     local output, process_error = obfuscate_source(source)
     if not output then
-        io.stderr:write(Errors.message(process_error) .. "\n")
+        render_error(process_error, { input = arguments.inputs[1], stage = anim.label ~= "" and anim.label or nil })
         os.exit(1)
     end
     local ok, message = write_file(arguments.output, output)
@@ -499,7 +571,7 @@ for _, input_path in ipairs(arguments.inputs) do
     else
         local output, process_error = obfuscate_source(source)
         if not output then
-            io.stderr:write("colisseum: " .. basename(input_path) .. ": " .. Errors.message(process_error) .. "\n")
+            render_error(process_error, { input = basename(input_path), stage = anim.label ~= "" and anim.label or nil })
             failed = failed + 1
         else
             local out_path = outdir .. "/" .. basename(input_path)

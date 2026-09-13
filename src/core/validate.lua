@@ -2,6 +2,16 @@ local Lexer = require("src.core.lexer")
 
 local Validate = {}
 
+-- Lua/Luau block keywords. The lexer classifies these as `identifier` tokens (it
+-- has no separate keyword kind), so block-structure validation must match them by
+-- value, not by kind -- otherwise the check below is dead code and only bracket
+-- balance is verified, letting malformed `if ... then`/`end` structure through.
+local KEYWORDS = {
+    ["if"] = true, ["while"] = true, ["for"] = true, ["function"] = true,
+    ["repeat"] = true, ["do"] = true, ["then"] = true, ["elseif"] = true,
+    ["else"] = true, ["until"] = true, ["end"] = true,
+}
+
 -- Lightweight structural validation over a token stream: balanced brackets and
 -- balanced block structure (if/while/for/function/repeat/do ... end/until). Not a
 -- full parser, but safe for the Lua and Luau token sets the obfuscator emits.
@@ -19,7 +29,7 @@ function Validate.syntax(source)
                 end
                 stack[#stack] = nil
             end
-        elseif token.kind == "keyword" then
+        elseif token.kind == "identifier" and KEYWORDS[token.value] then
             local value = token.value
             if value == "if" or value == "while" or value == "for" then
                 stack[#stack + 1] = value

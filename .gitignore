@@ -12,6 +12,7 @@ output.lua
 output*.lua
 
 # Local scripts / test payloads (your own inputs -- not public)
+main-test.lua
 test.lua
 official-test.lua
 env-probe.luau
@@ -24,10 +25,6 @@ env-probe.luau
 *.tmp
 scratchpad/
 tmp/
-
-# Tooling / assistant instructions (local only)
-CLAUDE.md
-.claude/
 
 # Editor and OS files
 .vscode/

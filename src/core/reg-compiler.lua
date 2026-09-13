@@ -768,7 +768,18 @@ local function compile_function(params, body, is_vararg, parent)
 end
 
 function RegCompiler.compile(source)
-    local ast = Parser.parse(LuauTypes.erase(source))
+    -- Parse the source as plain Lua first. In the obfuscator pipeline the Luau
+    -- types were ALREADY erased once (before the transforms ran), and the source
+    -- is now minified: re-erasing it here is unsafe, because without the original
+    -- newlines the type-eraser can misread an ordinary statement -- e.g. an
+    -- uninitialized `local x` followed by `if a:method()then y=...` -- as a
+    -- `local x: Type = ...` annotation and delete the real code. So only fall back
+    -- to type-erasure when the source still carries Luau type syntax (i.e. it does
+    -- not already parse as Lua).
+    local ok, ast = pcall(Parser.parse, source)
+    if not ok then
+        ast = Parser.parse(LuauTypes.erase(source))
+    end
     -- main chunk is a vararg function with no params
     return compile_function({}, ast.body, true, nil)
 end

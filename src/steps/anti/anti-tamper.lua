@@ -294,7 +294,7 @@ do
 
         if _at_do_stdlib then
             -- Any stdlib function whose live identity no longer matches the one
-            -- snapshotted at load has been hooked (hookfunction / replaced slot).
+            -- snapshotted at load has been hooked (hookfunction / replaced slot). kat was here
             local _at_hooked = 0
             for _at_ln, _at_snap in _at_pairs(_at_base_lib) do
                 local _at_lib = _at_rawget(_at_global, _at_ln)
