@@ -131,9 +131,7 @@ local function script_directory()
     return self:match("^(.*)[/\\][^/\\]+$") or "."
 end
 
--- Locate the Luau compiler bundled with the repository (built from vendor/Luau
--- by tools/build-luau.bat). Resolved relative to this script so it works from any
--- working directory; falls back to a repo-root or bin/ binary if present.
+-- Locate the bundled Luau compiler, resolved relative to this script so cwd doesn't matter.
 local function bundled_luau()
     local root = script_directory()
     local suffix = package.config:sub(1, 1) == "\\" and ".exe" or ""
@@ -154,8 +152,7 @@ end
 
 local obfuscator = require("src.obfuscator")
 
--- A modern installer-style progress line (braille spinner + smooth bar + ETA +
--- rotating tips), drawn on stderr while the pipeline runs.
+-- Installer-style progress line (spinner, bar, ETA, tips) on stderr while the pipeline runs.
 math.randomseed(os.time() + math.floor(((os.clock() or 0) * 1e6) % 1e6))
 local USE_COLOR = not os.getenv("NO_COLOR")
 local SPIN = { "\226\160\139", "\226\160\153", "\226\160\185", "\226\160\184", "\226\160\188",
@@ -256,9 +253,7 @@ local function pick_tip()
     return t
 end
 
--- Playful status verbs shown in place of "Obfuscating" now and then -- like the
--- silly words Claude flashes while thinking. "Obfuscating" is weighted so it shows
--- most of the time; all are <= 12 chars so the column width never shifts.
+-- Silly status verbs standing in for "Obfuscating"; weighted heavy so it usually shows, all <= 12 chars to hold the column width.
 local STATUS = {
     "Obfuscating", "Obfuscating", "Obfuscating", "Obfuscating",
     "Scrambling", "Mystifying", "Bamboozling", "Ciphering", "Tangling",
@@ -279,11 +274,8 @@ local function fmt_time(sec)
     if sec >= 60 then return string.format("%dm%02ds", math.floor(sec / 60), math.floor(sec % 60)) end
     return string.format("%.0fs", sec)
 end
--- Live display state. The pipeline only feeds `fraction`/`label`; the spinner and
--- the rotating tip are driven purely by the clock, so they keep animating even
--- while a single slow step blocks and the percentage sits still.
--- How fast the spinner spins, in seconds per frame. Small = fast. The spinner and
--- the tip run on their own clocks; the bar/percent/ETA only move on real progress.
+-- Live display state; pipeline feeds fraction/label, spinner/tip/status animate off the clock.
+-- Seconds per spinner frame (smaller = faster).
 local SPIN_INTERVAL = 0.05
 local anim = {
     fraction = 0, label = "", started = nil,
@@ -292,9 +284,7 @@ local anim = {
     drawing = false, done = false,
 }
 
--- Render the current line. The spinner frame and the tip are chosen from the
--- clock (not from how many times we were called), so they advance on their own
--- cadence regardless of whether `fraction` moved.
+-- Render the current line. Spinner and tip come from the clock, not the call count.
 local function draw()
     anim.drawing = true
     local now = os.clock()
@@ -302,15 +292,11 @@ local function draw()
     local fraction = anim.fraction
     if not fraction or fraction < 0 then fraction = 0 elseif fraction > 1 then fraction = 1 end
     local done = anim.done
-    -- Tip rotates on a ~5s clock timer, independent of the percentage.
+    -- Tip, status word and spinner each run on their own clock, not the percentage.
     if not anim.tip or now - anim.tip_at >= 5 then anim.tip = pick_tip(); anim.tip_at = now end
-    -- Status word ("Obfuscating" and friends) swaps on its own ~3s timer.
     if not anim.status or now - anim.status_at >= 3 then anim.status = pick_status(); anim.status_at = now end
-    -- Spinner frame runs off the clock, independent of the percentage.
     local frame = math.floor(now / SPIN_INTERVAL) % #SPIN + 1
-    -- Slow "breathing" of the purple->white gradient: a gentle sine sway (~7s
-    -- period) shifts every gradient color up (whiter) and down (purpler) together,
-    -- so the whole theme gently rises and falls on its own.
+    -- Sine sway that shifts the whole gradient whiter/purpler over ~7s.
     local breathe = 0.28 * math.sin(now * 0.9)
     local function gt(t)
         t = t + breathe
@@ -326,10 +312,8 @@ local function draw()
     local name = (anim.label or ""):gsub("^vm:", "")
     if done then name = "done" end
     if USE_COLOR then
-        -- Bar: each filled cell is a purple->white gradient step; empty cells are a
-        -- dim purple (never black). A bright glint sweeps across the filled portion
-        -- off the clock, so the bar stays alive even while the percentage sits still.
-        -- Two glint cells (a head + a softer trail) make the motion easy to follow.
+        -- Filled cells follow the gradient; a two-cell glint sweeps across them off
+        -- the clock so the bar keeps moving even when the percentage is stuck.
         local glint = (not done) and (math.floor(now / 0.07) % width) or -1
         local cells = {}
         for j = 1, width do
@@ -366,13 +350,7 @@ local function progress(fraction, label)
     draw()
 end
 
--- Tick: called frequently by the pipeline's hot loops (Lexer.scan and the VM
--- backend) through a global hook. Debug hooks are unreliable under LuaJIT because
--- compiled traces skip them, but an explicit function call always runs -- so this
--- keeps the spinner and tip moving even while one step blocks for seconds and the
--- percentage sits still. Frame-gated: it repaints at most once per spinner frame no
--- matter how often it fires, and never while draw() is mid-write or after the final
--- line, so it cannot corrupt the output or measurably slow the loop.
+-- Called from hot loops via a global hook so the spinner moves while a step blocks. Frame-gated: repaints once per frame.
 local function tick()
     if anim.drawing or anim.done then return end
     local frame = math.floor(os.clock() / SPIN_INTERVAL)
@@ -392,10 +370,8 @@ local function anim_stop()
     _G.__colisseum_tick = nil
 end
 
--- Render a build failure as a clean, Python-traceback-style block: the progress
--- line is cleared, then a separated red panel names the failing stage, the input,
--- and the human-readable message (internal Lua chunk locations are stripped). This
--- replaces the old behaviour where the raw error was glued onto the progress bar.
+-- Clear the progress line, then print the failure as a separated red panel with the
+-- stage, input and message (internal Lua chunk locations stripped).
 local function render_error(message, context)
     context = context or {}
     local raw = tostring(message)
@@ -433,11 +409,8 @@ local function obfuscate_source(source)
     anim_start()
     local output, process_error = obfuscator.try(function()
         if arguments.secure or arguments.backend then
-            -- Backend selection (VM packaging). native (default) = Colisseum's own
-            -- obfuscated tree-walking VM; register = the faster register VM (2-6x);
-            -- both need no Luau compiler and run on Lua/LuaJIT and Luau/Roblox. Fiu
-            -- (--backend fiu or --fiu <path>) runs real Luau bytecode for full Luau
-            -- syntax and requires --LuaU plus the vendored Luau compiler.
+            -- Backend selection: native (default) tree-walking VM, register the faster one, both need no compiler.
+            -- fiu runs real Luau bytecode and needs --LuaU plus the vendored compiler.
             local backend = arguments.backend or "native"
             local compiler
             if backend == "fiu" then
@@ -496,11 +469,7 @@ local function basename(path)
     return path:match("[^/\\]+$") or path
 end
 
--- Automatic self-update check. Before every obfuscation (unless --no-update), do a
--- live check of whether this git checkout is behind its GitHub origin and, if so,
--- ask whether to fast-forward. Everything here is fail-safe (any error is swallowed
--- and the build proceeds). It never discards local work: Updater.apply refuses on a
--- dirty or diverged tree.
+-- Self-update check (unless --no-update): if the checkout is behind origin, offer to fast-forward. Fail-safe, and never discards local work.
 if not arguments.no_update then
     local ok_upd, Updater = pcall(require, "src.core.updater")
     if ok_upd then

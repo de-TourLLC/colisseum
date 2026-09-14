@@ -5,16 +5,13 @@ local Step = {}
 Step.name = "numbers"
 Step.version = 2
 
--- Recursively rewrites an integer
--- literal into an equivalent arithmetic expression (a+b or (x)-y), so the value
--- never appears literally. Implemented natively at the token level with
--- Colisseum's per-build PRNG. Pure integer arithmetic keeps the result exact.
-local RANGE = 1048576 -- 2^20, matching the reference; well within exact-double range
+-- Rewrite an integer literal into an equivalent arithmetic expression so the value
+-- never appears literally. Pure integer arithmetic keeps the result exact.
+local RANGE = 1048576 -- 2^20, within exact-double range
 local SAFE = 2 ^ 52
 
 local function build_expr(prng, value, depth)
-    -- Base case: emit the literal (parenthesised when negative so it never forms
-    -- an ambiguous "+-" / "--" adjacency with a preceding operator).
+    -- Base case: emit the literal, parens on negatives so it never fuses with a preceding operator.
     if depth <= 0 or prng:float() > 0.55 then
         if value < 0 then return "(" .. tostring(value) .. ")" end
         return tostring(value)
@@ -31,8 +28,7 @@ function Step.apply(source, options)
     if type(source) ~= "string" then error("numbers: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("numbers: options must be a table") end
     options = options or {}
-    -- A seed drives per-build-unique expressions; without one, fall back to the
-    -- deterministic parenthesised form so unit tests stay stable.
+    -- A seed gives per-build expressions; without one, use the deterministic form.
     local prng = options.seed ~= nil and Entropy.prng(options.seed) or nil
     local tokens = Lexer.scan(source)
     local out, cursor = {}, 1

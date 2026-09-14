@@ -4,16 +4,13 @@ local Entropy = require("src.core.entropy")
 local Step = {}
 Step.name = "junk-comments"
 Step.version = 1
--- Inserting block comments between existing tokens only ever adds separators, so
--- the result stays valid and never needs re-lexing.
+-- Block comments between tokens are just separators, so the result stays valid.
 Step.emits_valid = true
 
--- Sprinkle short block comments of random non-ASCII glyphs between tokens: pure
--- whitespace to the parser, but they wreck pattern-based deobfuscators. Byte-
--- budgeted, seed-driven, and never contain `]]` or a newline.
+-- Sprinkle short block comments of random non-ASCII glyphs between tokens; ignored
+-- by the parser but they break pattern-based deobfuscators. Never contain `]]` or a newline.
 
--- Codepoint ranges that render as dense "garbage": CJK, arrows, box-drawing,
--- misc symbols, katakana. All are well above 0x5D, so none is a ']' or newline.
+-- Codepoint ranges that render as dense glyphs. All above 0x5D, so none is ']' or newline.
 local RANGES = {
     { 0x4E00, 0x9FA0 }, { 0x2190, 0x21FF }, { 0x2500, 0x257F },
     { 0x2600, 0x26FF }, { 0x30A0, 0x30FF }, { 0x2460, 0x24FF },
@@ -65,12 +62,9 @@ function Step.apply(source, options)
         -- Original span up to and including this token (comments included verbatim).
         out[#out + 1] = body:sub(cursor, token.finish)
         cursor = token.finish + 1
-        -- A block comment between two tokens is only a separator, so it is always
-        -- safe here. Skip when we would land mid-comment sequence anyway.
+        -- A block comment between two tokens is only a separator, so always safe here.
         if budget > 24 and prng:float() < density then
-            -- Leading space so the comment can never merge with a preceding '-'
-            -- into '---[[' (which Lua reads as a line comment and would swallow
-            -- the rest of a single-line program).
+            -- Leading space so the comment can't merge with a preceding '-' into '---[['.
             local piece = " " .. junk(prng, prng:range(4, 12))
             if #piece <= budget then
                 out[#out + 1] = piece

@@ -1,6 +1,5 @@
--- Luau types are compile-time metadata. Colisseum's native VMs execute Lua
--- values, so erase supported type syntax before the source reaches their Lua AST.
--- The scanner works on tokens and preserves newlines, strings, and comments.
+-- Luau types are compile-time metadata; erase type syntax before source reaches the Lua AST.
+-- Token-based, preserves newlines, strings, and comments.
 local Lexer = require("src.core.lexer")
 
 local Types = {}
@@ -40,8 +39,7 @@ function Types.erase(source)
         end
     end
 
-    -- Return the last token of a type expression. Delimiters at the outermost
-    -- level belong to the surrounding Lua expression and are retained.
+    -- Last token of a type expression; outermost delimiters belong to the surrounding Lua and stay.
     local function type_end(start, stop, stop_on_newline)
         local depth = 0
         local index = start
@@ -61,18 +59,15 @@ function Types.erase(source)
         return #tokens
     end
 
-    -- `export type T = ...` and `type T = ...` have no runtime equivalent.
-    -- A new statement on a later line ends the declaration; nested type tables,
-    -- function signatures, and generics are tracked by `depth` above.
+    -- `type T = ...` declarations have no runtime form; a new statement on a later line ends one.
     local index = 1
     while index <= #tokens do
         local token = tokens[index]
         local type_index = token.value == "export" and index + 1 or index
         local name = tokens[type_index + 1]
         local follows_name = tokens[type_index + 2]
-        -- `type` is also Lua's standard runtime function. It is a declaration
-        -- only when followed by an alias name and either `=` or generic `<...>`;
-        -- notably, `type(value)` must remain untouched.
+        -- `type` is also the runtime function; treat it as a declaration only when an
+        -- alias name and `=` or `<` follow, so `type(value)` stays.
         local alias = tokens[type_index] and tokens[type_index].value == "type" and
             name and name.kind == "identifier" and follows_name and
             (follows_name.value == "=" or follows_name.value == "<")

@@ -1,4 +1,4 @@
--- LuaJIT-compatible focused tests for src.core.compiler.
+-- Focused tests for src.core.compiler.
 local source = debug.getinfo(1, "S").source:sub(2)
 local root = source:match("^(.*)[/\\]src[/\\]core[/\\][^/\\]+$") or "."
 package.path = root .. "/?.lua;" .. root .. "/?/init.lua;" .. package.path

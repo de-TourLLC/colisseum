@@ -29,11 +29,7 @@ function Lexer.scan(source)
     if type(source) ~= "string" then error("lexer: source must be a string") end
     local result = {}
     local index = 1
-    -- Optional progress heartbeat: the CLI installs a global tick so its spinner
-    -- keeps animating during this hot loop, which can run for seconds on the large
-    -- intermediate source that bloated presets produce. Cached once and called only
-    -- every few thousand iterations, so it never measurably slows scanning; nil in
-    -- normal library/test use.
+    -- Optional CLI progress tick; nil in library/test use, called every few thousand iterations.
     local tick = _G.__colisseum_tick
     local since_tick = 0
     while index <= #source do
@@ -90,10 +86,8 @@ function Lexer.scan(source)
             local three = source:sub(index, index + 2)
             local two = source:sub(index, index + 1)
             local symbol
-            -- Multi-character operators must lex as ONE token, otherwise a later
-            -- step could insert whitespace/comments between the halves. In Luau,
-            -- splitting `->` (function types) or `+=`/`..=` (compound assignment)
-            -- produces invalid syntax.
+            -- Multi-char operators must lex as a single token, or a later step could
+            -- insert text between the halves and break syntax like `->` or `+=`.
             if three == "..." or three == "//=" or three == "..=" then
                 symbol = three; index = index + 3
             elseif two == ".." or two == "==" or two == "~=" or two == "<=" or two == ">=" or

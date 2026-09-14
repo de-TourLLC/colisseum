@@ -688,10 +688,8 @@ local function compile_function(params, body, is_vararg, parent)
         local cap = fs.captured[stmt.name] == true
         fs.actives[#fs.actives + 1] = { name = stmt.name, reg = base + 3, captured = cap }
         local body_start = here()
-        -- Box the loop variable INSIDE the body (FORLOOP writes the raw value into
-        -- base+3 each iteration and jumps here), so a fresh cell exists per iteration
-        -- for closures that capture it. Emitting NEWCELL before body_start would be
-        -- unreachable (the jumps skip it) and leave the register unboxed.
+        -- Box the loop variable inside the body so each iteration gets a fresh cell
+        -- for closures. FORLOOP jumps here, so a NEWCELL before body_start is skipped.
         if cap then emit(OP.NEWCELL, base + 3, base + 3) end
         fs.freereg = fs.nactive
         compile_block(stmt.body)
@@ -731,10 +729,8 @@ local function compile_function(params, body, is_vararg, parent)
             fs.actives[#fs.actives + 1] = { name = name, reg = base + 2 + i, captured = cap }
         end
         local body_start = here()
-        -- Box captured loop vars INSIDE the body (TFORCALL writes raw values, then
-        -- TFORLOOP jumps here); a fresh cell per iteration is created for closures.
-        -- The control register (base+3) keeps its raw value for the iterator protocol
-        -- because TFORLOOP/TFORCALL run before this point each iteration.
+        -- Box captured loop vars inside the body so closures get a fresh cell per
+        -- iteration. The control register keeps its raw value for the iterator.
         for i = 1, nnames do
             if fs.captured[stmt.names[i]] == true then emit(OP.NEWCELL, base + 2 + i, base + 2 + i) end
         end
@@ -768,14 +764,9 @@ local function compile_function(params, body, is_vararg, parent)
 end
 
 function RegCompiler.compile(source)
-    -- Parse the source as plain Lua first. In the obfuscator pipeline the Luau
-    -- types were ALREADY erased once (before the transforms ran), and the source
-    -- is now minified: re-erasing it here is unsafe, because without the original
-    -- newlines the type-eraser can misread an ordinary statement -- e.g. an
-    -- uninitialized `local x` followed by `if a:method()then y=...` -- as a
-    -- `local x: Type = ...` annotation and delete the real code. So only fall back
-    -- to type-erasure when the source still carries Luau type syntax (i.e. it does
-    -- not already parse as Lua).
+    -- Parse as plain Lua first; only erase types if it does not parse. The pipeline
+    -- already erased types once, and re-erasing minified code can misread a method
+    -- call after an uninitialised local as a type annotation and drop real code.
     local ok, ast = pcall(Parser.parse, source)
     if not ok then
         ast = Parser.parse(LuauTypes.erase(source))

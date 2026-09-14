@@ -18,9 +18,8 @@ end
 local this = debug.getinfo(1, "S").source:sub(2)
 local core_dir = (this:match("^(.*[/\\])") or "./") .. "../../core/"
 
--- Package Lua source into a self-contained chunk: embeds the native VM, carries
--- the program as ChaCha20-encrypted bytecode, decrypts with bitwise ops (no
--- loadstring), runs it. Lua-target analogue of the Fiu/ChaCha packaging.
+-- Package source into a self-contained chunk: embeds the native VM, carries the program
+-- as ChaCha20-encrypted bytecode, decrypts with bitwise ops (no loadstring), runs it.
 function Step.apply(source, options)
     if type(source) ~= "string" then error("native-vm: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("native-vm: options must be a table") end
@@ -39,8 +38,8 @@ function Step.apply(source, options)
     local prefix = "coli_"
     for _ = 1, 6 do prefix = prefix .. string.char(97 + prng:range(0, 25)) end
 
-    -- Per-build opcode permutation + numeric enum dispatch: every build numbers
-    -- opcodes differently and the interpreter dispatches on numbers, not names.
+    -- Per-build opcode permutation with numeric enum dispatch: each build numbers opcodes
+    -- differently and the interpreter dispatches on numbers, not names.
     local program = Bytecode.decode(Compiler.compile(source))
     local by_code, opcode_count = {}, 0
     for name, code in pairs(Bytecode.opcodes()) do
@@ -51,20 +50,18 @@ function Step.apply(source, options)
     for i = 1, opcode_count do perm[i] = i end
     for i = opcode_count, 2, -1 do local j = prng:range(1, i); perm[i], perm[j] = perm[j], perm[i] end
     for _, instruction in ipairs(program.instructions) do instruction.opcode = perm[instruction.opcode] end
-    -- Skip host validation: the program now carries permuted opcodes that only the
-    -- embedded (equally permuted) VM validates against.
+    -- Skip host validation: opcodes are now permuted, validated only by the equally-permuted VM.
     local bytecode = Bytecode.encode(program, true)
 
-    -- Permuted opcode -> actual name (kept for the embedded VM's shape validator
-    -- and error messages) and actual name -> permuted number (for the KAT enum).
+    -- Permuted opcode -> name (for the VM's shape validator and errors), name -> permuted number (KAT enum).
     local permuted_kinds, opnum = {}, {}
     for code = 1, opcode_count do
         permuted_kinds[perm[code]] = by_code[code]
         opnum[by_code[code]] = perm[code]
     end
 
-    -- Rewrite the opcode dispatch from string compares (op=="chunk") to per-build
-    -- numeric enum locals (op==KAT_CHUNK); type guards are left untouched.
+    -- Rewrite opcode dispatch from string compares (op=="chunk") to numeric enum locals
+    -- (op==KAT_CHUNK); type guards left alone.
     local function katify(src)
         src = src:gsub("names%[instructions%[id%]%.opcode%]", "instructions[id].opcode")
         src = src:gsub("names%[instructions%[cid%]%.opcode%]", "instructions[cid].opcode")
@@ -80,9 +77,8 @@ function Step.apply(source, options)
         return src
     end
 
-    -- KAT enum constants (per-build numbers), declared as flat locals at the top of
-    -- the VM IIFE. No single nested function references more than a handful, so the
-    -- LuaJIT 60-upvalue-per-function cap is not a concern.
+    -- KAT enum constants (per-build numbers) as flat locals at the top of the VM IIFE.
+    -- No nested function uses more than a handful, so the LuaJIT 60-upvalue cap is fine.
     local kat_defs = {}
     for code = 1, opcode_count do
         kat_defs[#kat_defs + 1] = "local KAT_" .. by_code[code]:upper() .. "=" .. perm[code]
@@ -92,8 +88,8 @@ function Step.apply(source, options)
     -- ChaCha20 decryptor expression -> plaintext bytecode string at runtime.
     local sealed = Package.seal(bytecode, seed, prefix .. "s")
 
-    -- Embed the permuted+rebranded VM, then strip comments/whitespace; the bytecode
-    -- module is name-mangled and its opcode-name strings encrypted too.
+    -- Embed the permuted+rebranded VM, then strip comments/whitespace. The bytecode module
+    -- is name-mangled and its opcode-name strings encrypted too.
     local kinds_literal = "{\"" .. table.concat(permuted_kinds, "\",\"") .. "\"}"
     local bytecode_raw = read(core_dir .. "bytecode.lua"):gsub("local kinds = %b{}", "local kinds = " .. kinds_literal, 1)
     local Rename = require("src.steps.naming.rename")
@@ -115,8 +111,8 @@ function Step.apply(source, options)
 
     local Environment = require("src.steps.security.environment")
     local B, R, C, P, E, A, V = prefix .. "B", prefix .. "R", prefix .. "C", prefix .. "P", prefix .. "E", prefix .. "A", prefix .. "V"
-    -- Sandboxed payload environment (no debug/load*/getfenv/setfenv escape) and a
-    -- host-captured debug anchor for the interpreter's anti-hook sampler.
+    -- Sandboxed payload environment (no debug/load*/getfenv/setfenv escape) plus a
+    -- host-captured debug anchor for the anti-hook sampler.
     return table.concat({
         "local " .. B .. "=(function()", bytecode_src, "end)()",
         "local " .. R .. "=(function() local require=function() return " .. B .. " end", runtime_src, "end)()",

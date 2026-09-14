@@ -49,15 +49,13 @@ function Safe.same_line(value)
     return not value:find("[\r\n]")
 end
 
--- Collect safe top-level statement boundaries in `body` (start, and after each `;`
--- or `end`). `until` is NOT a boundary (its condition expression follows) but still
--- drives depth so boundaries inside a repeat body are suppressed.
+-- Top-level statement boundaries in `body`: the start, and each position after a
+-- `;` or `end`. `until` is not a boundary but still counts toward depth.
 local function statement_boundaries(body)
     local tokens = Lexer.scan(body)
     local points = { 1 }
-    -- One combined nesting counter (block keywords AND brackets): a position is a
-    -- top-level boundary only when it is 0, so an `end` inside a `{...}`/`(...)` is
-    -- not mistaken for one.
+    -- One nesting counter for both block keywords and brackets; a boundary only
+    -- counts at depth 0.
     local depth = 0
     for index, token in ipairs(tokens) do
         local prev = tokens[index - 1]
@@ -75,17 +73,7 @@ local function statement_boundaries(body)
     return points
 end
 
--- Splice `blocks` (a list of ready-to-insert source strings, each already framed
--- with its own leading/trailing newline) into `body` at random top-level
--- statement boundaries, rather than concatenating them into one contiguous prefix
--- a deobfuscator could strip in a single cut. Returns the interleaved source.
---
--- Every boundary returned by statement_boundaries is a proven-safe insertion site
--- (position 1, or immediately before the token that follows a `;`/`end`/`until`),
--- so inserting any number of statements there cannot corrupt the program. Blocks
--- are ONLY ever placed at these boundaries -- never appended past the end of the
--- body, which could land a statement after a trailing top-level `return` (illegal
--- Lua). More blocks than boundaries simply means some boundaries take several.
+-- Splice blocks into body at random statement boundaries, not one contiguous prefix a deobfuscator could cut out.
 function Safe.interleave(body, prng, blocks)
     if type(body) ~= "string" then error("token-safe: body must be a string") end
     if #blocks == 0 then return body end

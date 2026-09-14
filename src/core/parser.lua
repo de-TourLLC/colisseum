@@ -39,8 +39,7 @@ local function parser(tokens)
         return token
     end
 
-    -- Skip a Luau generic parameter list `<T, U..., V = W>` after a function name
-    -- (type-level only; erased semantically). Handles nested `<...>` and `>>`.
+    -- Skip a Luau generic parameter list after a function name; handles nested `<...>` and `>>`.
     function object:skip_generics()
         if not (self:peek() and self:peek().value == "<") then return end
         local depth = 0
@@ -52,9 +51,7 @@ local function parser(tokens)
         end
     end
 
-    -- Bound expression/primary recursion so crafted deeply-nested input cannot
-    -- overflow the Lua call stack. Raised in expression() and primary() only:
-    -- those are the two mutually-recursive productions with unbounded nesting.
+    -- Bound recursion depth so deeply-nested input can't overflow the Lua call stack.
     function object:enter_expr()
         local depth = self.depth + 1
         if depth > self.max_depth then
@@ -107,8 +104,7 @@ local function parser(tokens)
                     else
                         values[#values + 1] = self:expression(0)
                     end
-                    -- Fields separate on ',' or ';' (interchangeable), and a trailing
-                    -- separator before '}' is allowed.
+                    -- Fields separate on ',' or ';', trailing separator before '}' allowed.
                     if not (self:take(",") or self:take(";")) then break end
                     if self:peek() and self:peek().value == "}" then break end
                 end
@@ -227,8 +223,7 @@ local function parser(tokens)
             self:expect("function")
             local name = self:take()
             if not name or name.kind ~= "identifier" then error("parser: expected function name at " .. token.start) end
-            -- Dotted/method defs `function a.b.c(...)` / `function a:m(...)`: desugar
-            -- to an assignment of an anonymous function (methods gain `self`).
+            -- Dotted/method defs desugar to assigning an anonymous function; methods gain `self`.
             local next_value = self:peek() and self:peek().value
             if not local_function and (next_value == "." or next_value == ":") then
                 local target = { kind = "identifier", value = name.value, start = name.start, finish = name.finish }
@@ -353,14 +348,8 @@ elseif token.value == "return" then
             self:take()
             local values = {}
             local next_token = self:peek()
-            -- A `return` is bare when it is followed by a block terminator or eof:
-            -- the lexer tags keywords as identifiers, so `return else`, `return end`,
-            -- `return until` and `return elseif` must not swallow the terminator as
-            -- a return value (Lua allows a retstat only at the end of a block).
-            -- A `return` is bare when it is followed by a block terminator or the
-            -- end of input: the lexer tags keywords as identifiers, so `return else`,
-            -- `return end`, `return until` and `return elseif` must not swallow the
-            -- terminator as a return value (a retstat is only valid at block end).
+            -- A bare `return` is followed by a block terminator or eof. Keywords lex as
+            -- identifiers, so don't swallow `end`/`else`/`elseif`/`until` as a return value.
             if next_token and next_token.value ~= "end" and next_token.value ~= "else"
                 and next_token.value ~= "elseif" and next_token.value ~= "until" then
                 repeat values[#values + 1] = self:expression(0) until not self:take(",")

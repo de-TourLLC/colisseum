@@ -104,8 +104,7 @@ local presets = {
         { "vm", { } },
         { "signature", { } }
     },
-    -- "fortress": maximum preset -- every static layer applied in two re-randomized
-    -- waves, feeding the register VM backend. Runs on Lua and Luau/Roblox.
+    -- fortress: every static layer in two randomized waves, feeding the register VM.
     fortress = {
         { "line-ending-normalize", { } },
         { "trailing-whitespace", { } },
@@ -141,10 +140,8 @@ local presets = {
         { "vm", { backend = "register", encrypt = true, tamperVM = true } },
         { "signature", { density = 0.35, max_bytes = 131072 } }
     },
-    -- "secure" is the recommended production preset: everything "hard" provides
-    -- plus split/constant-array pooling of string literals and a runtime
-    -- self-integrity guard -- without the heaviest VM layer. It is intentionally
-    -- strict super-set of "hard" so the two presets are not identical.
+    -- secure: the production preset. Everything hard has, plus string pooling and a
+    -- runtime integrity guard, without the VM layer.
     secure = {
         { "line-ending-normalize", { } },
         { "trailing-whitespace", { } },
@@ -173,12 +170,7 @@ local function load_step(name)
     return require(StepPaths.module(name))
 end
 
--- Centralized "bloat" amplifier. `options.bloat` (1..16) multiplies the dead/noise
--- budget of every noise step, so a single knob scales injected dead code across ALL
--- presets without editing each preset table. Every key is clamped to a per-key
--- ceiling (the "techo"): output grows large-but-bounded, so it stays loadable under
--- Roblox/Luau script-size and parser limits instead of becoming un-ingestible.
--- bloat=1 (default) is a strict no-op -- existing preset output is unchanged.
+-- options.bloat (1..16) scales every noise step's budget, clamped to a ceiling so output stays loadable. bloat=1 is a no-op.
 local BLOAT_CEILINGS = {
     max_insertions = 4096,
     max_bytes      = 262144,
@@ -222,8 +214,7 @@ function Obfuscator.obfuscate(source, options)
     local target = tostring(options.target or (options.luau and "luau" or "lua")):lower()
     if not targets[target] then error("obfuscator: target must be 'lua' or 'luau'") end
     local pipeline = options.steps or Obfuscator.preset(options.preset or "easy")
-    -- Native VM bytecode has Lua runtime semantics. Erase Luau-only type metadata
-    -- before any transforms whenever the pipeline will finish in that VM.
+    -- Native VM bytecode has Lua semantics, so erase Luau-only type metadata before any transforms when the pipeline ends in that VM.
     if target == "luau" then
         for _, item in ipairs(pipeline) do
             if (type(item) == "string" and item or item[1]) == "vm" then
@@ -234,16 +225,13 @@ function Obfuscator.obfuscate(source, options)
     end
     local valid, message, position = Validate.syntax(source)
     if not valid then error("obfuscator: syntax structure error at " .. position .. ": " .. message) end
-    -- Per-run seed. Explicit options.seed makes a build reproducible; otherwise a
-    -- fresh seed is drawn so every obfuscation differs -- distinct keys, names,
-    -- injected values, and tripwires -- even for identical input.
+    -- Per-run seed. Explicit options.seed makes a build reproducible; otherwise a fresh seed makes every obfuscation differ.
     local run_seed = Entropy.normalize(options.seed) or Entropy.collect()
     -- bloat amplifies every noise step's budget by an integer factor (see apply_bloat).
     local bloat = math.floor(tonumber(options.bloat) or 1)
     if bloat < 1 then bloat = 1 elseif bloat > Obfuscator.BLOAT_MAX then bloat = Obfuscator.BLOAT_MAX end
     local report = type(options.on_progress) == "function" and options.on_progress or nil
-    -- The VM/backend step dominates build time, so weight it heavily; the bar and
-    -- ETA then track real work instead of raw step count.
+    -- The VM/backend step dominates build time, so weight it heavily and the bar tracks real work.
     local weights, total_w, acc_w = {}, 0, 0
     for i, item in ipairs(pipeline) do
         weights[i] = ((type(item) == "string" and item or item[1]) == "vm") and 12 or 1
@@ -291,9 +279,7 @@ function Obfuscator.obfuscate(source, options)
         source = step.apply(source, settings)
         acc_w = acc_w + weights[step_index]
         if type(source) ~= "string" then error("obfuscator: step " .. tostring(name) .. " returned non-string") end
-        -- Generator steps (vm, crypto) embed their input as numeric data inside a
-        -- fixed, always-valid template, so their (often very large) output does not
-        -- need re-lexing. They declare `emits_valid` to skip that cost.
+        -- Generator steps (vm, crypto) embed input in a fixed valid template, so they declare emits_valid to skip re-lexing.
         if not step.emits_valid then
             local valid_step, message_step, position_step = Validate.syntax(source)
             if not valid_step then
@@ -325,17 +311,14 @@ function Obfuscator.package_luau(source, options)
     if type(source) ~= "string" then error("obfuscator: source must be a string") end
     options = options or {}
     if type(options) ~= "table" then error("obfuscator: options must be a table") end
-    -- Backend: "native" (default) is Colisseum's own obfuscated VM and needs no
-    -- external compiler; its one output runs on both Lua/LuaJIT and Luau/Roblox.
-    -- "fiu" runs real Luau bytecode (full Luau syntax) and requires the compiler.
+    -- Backend: "native" (default) is Colisseum's own VM, no external compiler, runs on Lua and Luau.
+    -- "fiu" runs real Luau bytecode (full Luau syntax) and needs the compiler.
     local backend = options.backend or "native"
     if backend == "fiu" and (type(options.compiler) ~= "string" or options.compiler == "") then
         error("obfuscator: the Fiu backend requires a Luau compiler path")
     end
     local target = options.target or "luau"
-    -- Run the preset's transforms but NOT its own `vm` step: package_luau applies
-    -- the VM itself with the chosen backend, so a preset that already carries a vm
-    -- step (e.g. total) must not double-package.
+    -- Run the preset's transforms but not its own vm step; package_luau applies the VM itself, so presets carrying vm (e.g. total) don't double-package.
     local steps = {}
     for _, item in ipairs(Obfuscator.preset(options.preset or "secure")) do
         if item[1] ~= "vm" then steps[#steps + 1] = item end

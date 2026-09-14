@@ -1,5 +1,4 @@
--- Opaque native Luau bytecode boundary for the pinned Luau revision.
--- This module never parses, evaluates, or loads the payload itself.
+-- Opaque Luau bytecode boundary for the pinned revision. Never parses, evaluates, or loads the payload.
 local Transform = {}
 
 Transform.MAGIC = "CLUB"
@@ -47,7 +46,7 @@ local function read(data, position, size)
     return value, position + size
 end
 
--- A small deterministic integrity check that works on Lua 5.1/LuaJIT too.
+-- Small deterministic integrity check.
 local function checksum(data)
     local value = 2166136261
     for index = 1, #data do

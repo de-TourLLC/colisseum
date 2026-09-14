@@ -2,10 +2,8 @@ local Lexer = require("src.core.lexer")
 
 local Validate = {}
 
--- Lua/Luau block keywords. The lexer classifies these as `identifier` tokens (it
--- has no separate keyword kind), so block-structure validation must match them by
--- value, not by kind -- otherwise the check below is dead code and only bracket
--- balance is verified, letting malformed `if ... then`/`end` structure through.
+-- Block keywords. The lexer emits these as identifier tokens, so match them by
+-- value rather than kind.
 local KEYWORDS = {
     ["if"] = true, ["while"] = true, ["for"] = true, ["function"] = true,
     ["repeat"] = true, ["do"] = true, ["then"] = true, ["elseif"] = true,

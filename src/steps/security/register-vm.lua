@@ -17,11 +17,9 @@ end
 local this = debug.getinfo(1, "S").source:sub(2)
 local core_dir = (this:match("^(.*[/\\])") or "./") .. "../../core/"
 
--- Turn Lua source into a self-contained chunk that embeds the register VM
--- (fog-untangler + interpreter), carries the program as an opaque build-foged
--- byte stream plus a numeric region map (no plaintext bytecode ever materializes),
--- and runs it. Faster analogue of the native tree-walking backend. Runs on both
--- Lua/LuaJIT and Luau/Roblox (portable bit32/bit and getfenv(0)/_G resolution).
+-- Turn source into a self-contained chunk that embeds the register VM (fog-untangler +
+-- interpreter), carries the program as an opaque build-foged byte stream plus a numeric
+-- region map, and runs it. Faster than the tree-walker; runs on Lua/LuaJIT and Luau/Roblox.
 function Step.apply(source, options)
     if type(source) ~= "string" then error("register-vm: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("register-vm: options must be a table") end
@@ -40,10 +38,9 @@ function Step.apply(source, options)
     local prefix = "coli_"
     for _ = 1, 6 do prefix = prefix .. string.char(97 + prng:range(0, 25)) end
 
-    -- Per-build opcode permutation: shuffle the VM's opcode numbers, remap the
-    -- compiled program to match, and inline the permuted numbers into the runtime
-    -- dispatch -- so no two builds share an encoding and neither the packed byte
-    -- stream nor the interpreter carries readable opcode names.
+    -- Per-build opcode permutation: shuffle the opcode numbers, remap the program to match,
+    -- and inline the permuted numbers into runtime dispatch, so no two builds share an encoding
+    -- and neither the packed stream nor the interpreter carries readable opcode names.
     local report = type(options.progress) == "function" and options.progress or function() end
     report(0.0, "vm:compiling")
     local mainproto = RegCompiler.compile(source)
@@ -56,9 +53,9 @@ function Step.apply(source, options)
     for i = 1, opcount do perm[i] = i end
     for i = opcount, 2, -1 do local j = prng:range(1, i); perm[i], perm[j] = perm[j], perm[i] end
 
-    -- Polymorphic opcodes: give each op several interchangeable raw codes (chosen
-    -- per instruction); `norm` folds them back to the permuted canonical and ships
-    -- as program.o. Raw codes are one byte (total <= 255).
+    -- Polymorphic opcodes: give each op several interchangeable raw codes (chosen per
+    -- instruction); `norm` folds them back to the permuted canonical, shipped as program.o.
+    -- Raw codes are one byte (total <= 255).
     local total = opcount + prng:range(0, 255 - opcount)
     local norm = {}
     local aliases_for = {}
@@ -83,24 +80,20 @@ function Step.apply(source, options)
     for k = 1, total do norm_parts[k] = norm[k] end
     local norm_literal = "{" .. table.concat(norm_parts, ",") .. "}"
 
-    -- Opaque in-memory encoding: the program ships as a build-foged byte stream
-    -- (one concatenated blob of every proto's constants + instructions) plus a
-    -- numeric region map. The interpreter un-fogs each byte on demand, so no
-    -- decoded {code, constants, protos} tree exists to dump (V-H1/A-1).
+    -- Opaque in-memory encoding: the program ships as a build-foged byte stream (one blob of
+    -- every proto's constants + instructions) plus a numeric region map. The interpreter un-fogs
+    -- each byte on demand, so no decoded {code, constants, protos} tree exists to dump.
     report(0.4, "vm:encoding")
     local nfog = prng:range(6, 10)
     local fog = {}
     for i = 1, nfog do fog[i] = prng:range(0, 255) end
-    -- Real ChaCha20 stream cipher over the blob (opt-in; default in fortress). The
-    -- runtime derives the identical RFC 8439 keystream from the fog and un-masks on
-    -- demand, so the decoded program still never materializes in memory.
+    -- ChaCha20 stream cipher over the blob (opt-in, default in fortress). The runtime derives
+    -- the same RFC 8439 keystream from the fog and un-masks on demand, so the program never materializes.
     local enc_field = ""
     if options.encrypt then enc_field = ",enc=1" end
-    -- Interpreter-bound tamper gate (opt-in; default in fortress). Decisive
-    -- executor/injector marker names travel escaped (byte-by-byte, the same standard
-    -- Environment uses for sensitive names -- no plaintext "getgenv" in the bundle);
-    -- reg-runtime latches the silent honeypot drift if any one is present at start,
-    -- so the anti-tamper response lives IN the VM, not only in the compiled payload.
+    -- Interpreter-bound tamper gate (opt-in, default in fortress). Executor/injector marker
+    -- names travel escaped byte-by-byte (no plaintext "getgenv" in the bundle); reg-runtime
+    -- latches a silent honeypot drift if any is present at start, so the response lives in the VM.
     local m_field = ""
     if options.tamperVM then
         local marks = {
@@ -115,11 +108,9 @@ function Step.apply(source, options)
         m_field = ",m={" .. table.concat(esc, ",") .. "}"
     end
     local blob, regs = RegBytecode.encode_opaque(mainproto, fog, options.encrypt)
-    -- Optional Fibonacci (Zeckendorf) blob layer: carry the fogged byte stream as a
-    -- bit-packed sequence of self-delimiting Fibonacci codewords (every numeric
-    -- constant, operand, and offset in the blob is thereby re-encoded). The runtime
-    -- rebuilds the exact bytes once at VM start; the hot loop is unchanged. Opt-in
-    -- (options.fibonacci) since it grows the payload and adds a one-time decode.
+    -- Optional Fibonacci (Zeckendorf) blob layer: carry the fogged stream as bit-packed
+    -- self-delimiting Fibonacci codewords, re-encoding every constant, operand, and offset.
+    -- The runtime rebuilds the bytes once at VM start. Opt-in, since it grows the payload.
     local fib_field = ""
     if options.fibonacci then
         local Fibonacci = require("src.core.fibonacci")
@@ -142,10 +133,9 @@ function Step.apply(source, options)
     end
     local regs_literal = "{" .. table.concat(regs_parts, ",") .. "}"
 
-    -- Embed the interpreter with its dispatch inlined to the permuted numbers:
-    -- the OP table and its readable field names (MOVE, LOADK, ...) never ship --
-    -- every `OP.<NAME>` token becomes a plain number, and the RegBytecode
-    -- dependency line is dropped (the runtime is self-contained at that point).
+    -- Embed the interpreter with dispatch inlined to the permuted numbers: the OP table and
+    -- its field names (MOVE, LOADK, ...) never ship, every `OP.<NAME>` becomes a plain number,
+    -- and the RegBytecode dependency line is dropped since the runtime is self-contained.
     report(0.68, "vm:mangling")
     local opcode_of = RegBytecode.opcodes()
     local rt_raw = read(core_dir .. "reg-runtime.lua")
@@ -154,11 +144,9 @@ function Step.apply(source, options)
         :gsub("OP%.([A-Z_]+)", function(nm)
             local c = opcode_of[nm]; return c and tostring(perm[c]) or nil
         end)
-    -- Obfuscate the interpreter SOURCE itself (fast: small source, payload not yet
-    -- attached). rename mangles identifiers everywhere. String encryption is NOT
-    -- applied to the interpreter: its strings sit outside the hot dispatch loop,
-    -- and the opcode names are already gone. Each pass is guarded: a failure just
-    -- keeps the previous source.
+    -- Obfuscate the interpreter source itself (fast, small source, payload not yet attached).
+    -- rename mangles identifiers; string encryption is skipped here since the strings sit
+    -- outside the hot loop and opcode names are gone. Each pass is guarded: a failure keeps the previous source.
     local Rename = require("src.steps.naming.rename")
     local StepPaths = require("src.core.step-paths")
     local SplitStrings = require(StepPaths.module("split-strings"))
@@ -175,32 +163,21 @@ function Step.apply(source, options)
     end
     local runtime_src = Minify.apply(harden(rt_raw, "regrt", false))
 
-    -- Post-VM noise round. Wraps the finished bundle (which is already the sealed,
-    -- encrypted register VM) in a second layer of semantic junk: decoy functions,
-    -- always-false opaque predicates guarding dead blocks, and meaningless "stages"
-    -- that compute and discard throwaway values. A static deobfuscator that has
-    -- just unwound the VM now finds a fresh pile of garbage whose statements
-    -- assemble into nothing, yet the emitted program still runs and returns
-    -- exactly V[1..4] unchanged. Drawn from its own sub-seed so the noise is
-    -- per-build but deterministic under an explicit seed. Only constructs the
-    -- tree-walker register VM supports are used (locals, local function, for,
-    -- if/then/return/end, and/or/==/~=, + - * %, numeric literals, [] indexing),
-    -- and no builtins are called on the correctness-critical path.
+    -- Post-VM noise round: decoy functions, always-false predicates guarding dead
+    -- blocks, and fake stages that compute and discard values. The program still
+    -- returns V[1..4] unchanged. Uses its own sub-seed.
     local noise_prng = Entropy.prng(tostring(seed) .. "|postvm")
     local function decoy_ident()
         return prefix .. noise_prng:identifier(noise_prng:range(4, 8))
     end
-    -- A fresh modulus for every decoy, drawn from a wide range each time. The old
-    -- prologue hard-coded `%9973`, which was a single grep-able signature present
+    -- A fresh modulus per decoy. The old prologue hard-coded `%9973`, a grep-able signature
     -- in every build; a per-decoy random modulus removes that fixed marker.
     local function decoy_mod()
         return tostring(noise_prng:range(257, 65521))
     end
-    -- Decoy FUNCTION skeletons. Each is never called, so any of these shapes is
-    -- interchangeable; picking one at random per decoy means no single function
-    -- body pattern recurs across builds. All stay inside the portable subset
-    -- (locals, local function, for, if/return, and/or/==/~=, + - * %, numeric
-    -- literals) so the output runs on Lua 5.1/LuaJIT and Luau alike.
+    -- Decoy function skeletons. None are ever called, so the shapes are interchangeable;
+    -- picking one at random per decoy means no body pattern recurs across builds. All stay in
+    -- the portable subset, so the output runs on Lua 5.1/LuaJIT and Luau alike.
     local fn_shapes = {
         function() -- accumulating for-loop (random modulus)
             local name, arg, acc = decoy_ident(), decoy_ident(), decoy_ident()
@@ -229,10 +206,8 @@ function Step.apply(source, options)
                 tostring(noise_prng:range(2, 9)) .. ")%" .. decoy_mod() .. " return " .. b .. " end"
         end,
     }
-    -- Always-FALSE predicate skeletons guarding a dead block. Each construction is
-    -- provably false at runtime (so the guarded body never runs and control always
-    -- flows on) but reaches that falsity a different way, so the guard is not one
-    -- recurring `a==b and lit==lit+k` shape.
+    -- Always-false predicate skeletons guarding a dead block. Each is provably false
+    -- but reaches falsity a different way, so the guard isn't one recurring shape.
     local pred_shapes = {
         function() -- (a==b) and (base ~= base): identity contradiction
             local a, b = decoy_ident(), decoy_ident()
@@ -282,12 +257,9 @@ function Step.apply(source, options)
         end,
     }
     local function noise_blocks()
-        -- Build a mixed pool of decoys, then shuffle so the emission order is not a
-        -- fixed functions->predicates->stages sequence. Both the *shapes* (above)
-        -- and their *order* now vary per build, so a scanner cannot key on either
-        -- a recurring body pattern or a recurring block layout. Returns the list so
-        -- the caller can interleave the decoys among the real VM setup statements
-        -- (rather than emit them as one contiguous, strippable prologue block).
+        -- Mixed pool of decoys, shuffled so the emission order isn't a fixed
+        -- functions/predicates/stages sequence. Returns the list so the caller can
+        -- interleave the decoys among the real VM setup instead of one prologue block.
         local pool = {}
         for _ = 1, noise_prng:range(2, 4) do pool[#pool + 1] = noise_prng:pick(fn_shapes)() end
         for _ = 1, noise_prng:range(2, 4) do pool[#pool + 1] = noise_prng:pick(pred_shapes)() end
@@ -302,13 +274,9 @@ function Step.apply(source, options)
     report(0.92, "vm:finishing")
     local Environment = require("src.steps.security.environment")
     local R, S, F, G, E, A, V, O = prefix .. "R", prefix .. "S", prefix .. "F", prefix .. "G", prefix .. "E", prefix .. "A", prefix .. "V", prefix .. "O"
-    -- Layout: the VM interpreter comes FIRST -- the bundle opens with the runtime
-    -- itself, not a decoy prologue, so a deobfuscator cannot treat a leading junk
-    -- block as "skip to the real code" and lift the VM out. The payload/env locals
-    -- and the decoy noise are all independent statements that only have to precede
-    -- the run; they are shuffled together so the VM setup is not one contiguous,
-    -- liftable region framed by strippable junk. Lua requires the chunk's `return`
-    -- to be last, so the run + return stay at the tail.
+    -- Layout: the VM interpreter comes first, so a deobfuscator can't skip a leading
+    -- junk prologue to reach the real code. The payload/env locals and decoy noise
+    -- are shuffled together ahead of the run, and the run + return stay at the tail.
     local head = "local " .. R .. "=(function()\n" .. runtime_src .. "\nend)()"
     local mids = {
         "local " .. S .. "=" .. blob_literal,
@@ -318,18 +286,12 @@ function Step.apply(source, options)
         "local " .. E .. "=" .. Environment.expression(),
         "local " .. A .. "=" .. Environment.anchor(),
     }
-    -- Decoy VM routes ("false paths"): each is a self-contained block of payload-
-    -- shaped locals (a random blob string + fog/region/norm that look like the real
-    -- ones) plus a dead branch, guarded by a provably-false predicate, that pcall-
-    -- wraps a decoy R.run over them. A deobfuscator now sees SEVERAL `.run` calls and
-    -- SEVERAL payload blobs and must analyse each to decide which one is real -- yet
-    -- runtime cost is zero (the guard never passes, and the call is pcall-wrapped
-    -- even if analysis forces it). This adds analysis routes without adding runtime.
+    -- Decoy VM routes: each is a block of payload-shaped locals plus a dead branch,
+    -- guarded by a false predicate, that pcall-wraps a decoy R.run. A deobfuscator
+    -- sees several .run calls and blobs and must analyse each, at zero runtime cost.
     do
-        -- Decoy error codes: these NEVER fire (their branches are provably dead), but
-        -- a deobfuscator reading the bundle sees many branded aborts with distinct
-        -- codes that look like live integrity failures, indistinguishable from the
-        -- real guards. Non-injective and per-build shuffled, so they add no signal.
+        -- Decoy error codes: dead branches that never fire, so a reader sees many
+        -- branded aborts that look like real integrity failures. Shuffled per build.
         local decoy_codes = {
             "8F2A", "4C71", "9D05", "B3E8", "2F19", "6A44", "0E7C", "C1B2",
             "53AF", "1A6D", "E409", "7B3C", "A0F5", "36D8", "D71E", "4820",
@@ -362,10 +324,8 @@ function Step.apply(source, options)
             local expect = tostring(noise_prng:range(1, 2147483646))
             local fogn = {}
             for i = 1, noise_prng:range(4, 8) do fogn[i] = tostring(noise_prng:range(0, 255)) end
-            -- A decoy integrity route: a per-build checksum function, a comparison
-            -- that "verifies" the decoy blob against a baked digest and aborts with a
-            -- branded code, then a decoy VM run -- all inside a provably-false guard,
-            -- so it is inert (and the run is pcall-wrapped even if analysis forces it).
+            -- A decoy integrity route: a checksum function, a fake verify-and-abort,
+            -- and a decoy VM run, all inside a false guard, so it's inert.
             mids[#mids + 1] =
                 "local " .. ds .. "=" .. decoy_blob() ..
                 " local " .. df .. "={" .. table.concat(fogn, ",") .. "}" ..
@@ -393,10 +353,8 @@ function Step.apply(source, options)
         run_stmt,
         "return " .. V .. "[1]," .. V .. "[2]," .. V .. "[3]," .. V .. "[4]",
     }, "\n")
-    -- Collapse to a single line. The only newlines are statement separators; the
-    -- minified VM source and the packed payload literals carry no literal
-    -- newlines, so replacing newlines with spaces is safe and avoids re-lexing
-    -- the whole (large) bundle.
+    -- Collapse to one line. The only newlines are statement separators, so replacing
+    -- them with spaces is safe and avoids re-lexing the whole bundle.
     return (bundle:gsub("[\r\n]+", " "))
 end
 

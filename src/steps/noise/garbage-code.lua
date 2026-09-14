@@ -27,9 +27,8 @@ local function check_source(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
 
--- Unreachable wrappers with varied always-false guards (`n*0 ~= 0`, `x ~= x`, an
--- ordered-pair contradiction) so they aren't a grep-able `if false then`. Bodies
--- are harmless local assignments, so a guard evaluating true still changes nothing.
+-- Unreachable wrappers with varied always-false guards so they aren't a grep-able
+-- `if false then`. Bodies are harmless local assignments regardless.
 local guards = {
     function(body) return "if false then " .. body .. " end" end,
     function(body) return "while false do " .. body .. " end" end,
@@ -82,22 +81,19 @@ function Step.apply(source, options)
     if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
     local shebang = source:match("^(#![^\n]*\n)") or ""
     local body = source:sub(#shebang + 1)
-    -- Always drive the injected noise from a PRNG: without one the fallback would
-    -- emit a fixed `_colisseum_dead_N` prefix that a regex could strip on sight.
+    -- Always drive noise from a PRNG; a fixed fallback prefix would be regex-strippable.
     local prng = Entropy.prng(options.seed or "garbage-code")
     local blocks, bytes = {}, 0
     for index = 1, max_insertions do
         local statement = "local " .. prng:identifier(prng:range(6, 12)) .. " = " .. value_expr(prng)
-        -- Frame each block with its own leading/trailing newline so it can never
-        -- fuse with a neighbouring token when spliced at a statement boundary.
+        -- Leading/trailing newline so the block can't fuse with a neighbouring token.
         local text = "\n" .. prng:pick(guards)(statement, prng) .. "\n"
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    -- Scatter the dead blocks across random top-level statement boundaries instead
-    -- of stacking them into one contiguous prefix a deobfuscator could strip in a
-    -- single cut. Fall back to a prefix splice if interleaving somehow invalidates.
+    -- Scatter dead blocks across random statement boundaries, not one strippable
+    -- prefix. Fall back to a prefix splice if interleaving invalidates.
     local result = shebang .. Safe.interleave(body, prng, blocks)
     local valid, message, position = Validate.syntax(result)
     if not valid then

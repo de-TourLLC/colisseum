@@ -59,10 +59,8 @@ local function top_level_boundaries(source, tokens, first_offset)
     return boundaries
 end
 
--- Each tripwire is dead (`if false then ... end`), but its identifier, keys, and
--- values are drawn from the per-build PRNG so no fixed decoy signature (formerly
--- `_ad_static_`, `"branch"`, `"static-branch-"`) survives across builds for a
--- deobfuscator to fingerprint and strip.
+-- Each tripwire is dead (`if false then ... end`); its name, keys, and values come
+-- from the per-build PRNG so no fixed decoy signature survives across builds.
 local function tripwire(prng)
     local name = prng:identifier(prng:range(6, 12))
     local key = prng:identifier(prng:range(4, 8)):gsub("^_", "")
@@ -81,11 +79,10 @@ function Step.apply(source, options)
     local max_tripwires = positive_option(options, "maxTripwires", 8)
     local max_bytes = positive_option(options, "maxBytes", 2048)
     local density = positive_option(options, "density", 240)
-    -- Bounded ceilings so the build-wide bloat amplifier stays large-but-finite.
+    -- Bounded ceilings so the build-wide bloat amplifier stays large but finite.
     if max_tripwires > 4096 then max_tripwires = 4096 end
     if max_bytes > 262144 then max_bytes = 262144 end
-    -- A seed makes tripwires unique per build; without one a stable default keeps
-    -- output deterministic for reproducible builds and tests.
+    -- A seed makes tripwires unique per build; without one, output stays deterministic.
     local prng = Entropy.prng(options.seed ~= nil and options.seed or "anti-deobfuscation")
     local shebang = source:match("^(#![^\n]*\n)") or ""
     local first_offset = #shebang + 1

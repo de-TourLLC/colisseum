@@ -4,10 +4,7 @@ local function mix(value)
     return (value * 1103515245 + 12345) % 2147483647
 end
 
--- Produces confusable identifiers in the classic confusable style: a branded
--- prefix followed by characters drawn from a tiny, visually similar alphabet.
--- Defaults to `coli_` + 6-8 of {j, L}, matching the VM backends' colon prefix.
--- All of it is configurable per build.
+-- Confusable identifiers: a branded prefix plus chars from a tiny lookalike alphabet. Defaults to coli_ + 6-8 of {j,L}, all configurable.
 function Generator.new(seed, config)
     config = config or {}
     local prefix = config.prefix or "coli_"
@@ -44,9 +41,7 @@ function Generator.new(seed, config)
             value = build(min_len + math.floor(state / 256) % span)
             if not used[value] then break end
         end
-        -- Guaranteed-unique, always-terminating fallback that stays in the same
-        -- alphabet: encode a monotonic counter as charset "digits", padded longer
-        -- than any random name so it can never collide with one.
+        -- Unique fallback: encode a monotonic counter as charset digits, padded longer than any random name so it can't collide.
         while used[value] do
             counter = counter + 1
             local n, parts = counter, {}

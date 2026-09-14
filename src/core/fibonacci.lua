@@ -1,18 +1,6 @@
--- Fibonacci (Zeckendorf) coding of positive integers, and a self-delimiting byte
--- codec built on it. This is the scheme in the reference image: greedily subtract
--- the largest Fibonacci number <= n, record which Fibonaccis were used as usage
--- bits ordered smallest -> largest, then append a terminal '1'.
---
---   n = 143  ->  used {2,5,13,34,89}  ->  usage bits 0101010101  ->  "01010101011"
---
--- The coding sequence is 1,2,3,5,8,13,21,34,55,89,144,... (the Fibonacci numbers
--- with the leading duplicate 1 dropped). Zeckendorf's theorem guarantees the greedy
--- decomposition never uses two consecutive Fibonaccis, so the usage bits contain no
--- "11"; the appended terminal '1' therefore always produces the FIRST "11" in the
--- stream exactly at the codeword boundary, making each codeword self-delimiting.
---
--- Pure integer arithmetic (no bitops, no floats): identical on Lua 5.1 / 5.3 /
--- LuaJIT / Luau, so anything encoded at build time decodes byte-for-byte at runtime.
+-- Fibonacci (Zeckendorf) coding of positive integers, plus a self-delimiting byte codec.
+-- A terminal '1' after the usage bits puts the first "11" on the codeword boundary.
+-- All integer math, so build-time encoding decodes byte-for-byte at runtime.
 
 local Fibonacci = {}
 
@@ -30,8 +18,7 @@ end
 -- Shared, lazily grown coding sequence.
 local SEQ = { 1, 2 }
 
--- Encode one integer n >= 1 as a Fibonacci codeword (a string of '0'/'1' ending in
--- "11"). Errors on n < 1 or non-integers -- callers that need to carry 0 bias by +1.
+-- Encode integer n >= 1 as a codeword ('0'/'1' ending in "11"). Callers carrying 0 bias by +1.
 function Fibonacci.encode(n)
     if type(n) ~= "number" or n < 1 or n % 1 ~= 0 then
         error("fibonacci: encode expects a positive integer, got " .. tostring(n))
@@ -63,8 +50,7 @@ function Fibonacci.decode(bits, start)
     while pos <= len do
         local b = bits:sub(pos, pos)
         if b == "1" and prev == "1" then
-            -- Second half of the "11" terminator: the previous '1' was the last real
-            -- usage bit (already counted); this '1' is the appended terminal.
+            -- Second half of the "11" terminator; the previous '1' was the last usage bit.
             return n, pos + 1
         end
         if b == "1" then
@@ -78,9 +64,8 @@ function Fibonacci.decode(bits, start)
     error("fibonacci: truncated codeword (no '11' terminator) from position " .. tostring(start))
 end
 
--- Encode a byte string into one contiguous bit string. Each byte b (0..255) is
--- carried as the integer b+1 (so 0 is representable), concatenated as codewords.
--- Because every codeword self-delimits, no length prefixes are needed between them.
+-- Encode a byte string into one bit string; each byte is carried as b+1 so 0 fits.
+-- Codewords self-delimit, so no length prefixes between them.
 function Fibonacci.encode_bytes(data)
     if type(data) ~= "string" then error("fibonacci: encode_bytes expects a string") end
     local out = {}
@@ -102,9 +87,8 @@ function Fibonacci.decode_bytes(bits, count)
     return table.concat(out)
 end
 
--- Pack a '0'/'1' bit string into a byte string (8 bits per byte, MSB first, the
--- final byte zero-padded on the right). Returns (packed, bit_length) so the exact
--- bit count -- and thus the padding -- is recoverable.
+-- Pack a '0'/'1' bit string into bytes (8 per byte, MSB first, last byte zero-padded).
+-- Returns (packed, bit_length) so the padding is recoverable.
 function Fibonacci.pack_bits(bits)
     local out = {}
     local n = #bits

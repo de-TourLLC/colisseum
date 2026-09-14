@@ -1,16 +1,8 @@
--- Register VM instruction set. A compiled program is a tree of protos; each proto
--- holds a flat instruction stream, a constants pool, child protos (for closures),
--- and upvalue descriptors. Instructions are arrays { opcode, a, b, c } so the
--- interpreter reads them with cheap numeric indexing.
---
--- Registers are a flat per-frame array R[0..maxstack-1]. Locals occupy low slots;
--- temporaries are allocated above them. A local that is captured by a nested
--- closure is "boxed": its register holds a one-element cell { value } and the
--- ...CELL opcodes read/write through it, so the closure and its parent share the
--- same storage (correct upvalue semantics without open/closed upvalue machinery).
---
--- RK operands: a compiler operand tagged as a constant is encoded as -(kidx+1)
--- (negative) so a single field can name either a register (>=0) or a constant.
+-- Register VM instruction set. A program is a tree of protos, each with a flat
+-- instruction stream of { opcode, a, b, c } arrays, constants, child protos, and upvalues.
+-- Registers are a per-frame array; captured locals are boxed into cells the CELL opcodes
+-- read through. An RK operand encodes a constant as a negative index, so one field names
+-- either a register (>=0) or a constant.
 
 local RegBytecode = {}
 
@@ -45,8 +37,7 @@ local names = {
     "FORLOOP",    -- a,b     numeric-for step/test; if continuing R[a+3]=index, pc+=b
     "TFORCALL",   -- a,c     generic-for: call R[a] with R[a+1],R[a+2]; c results at R[a+3..]
     "TFORLOOP",   -- a,b     if R[a+3]~=nil then R[a+2]=R[a+3]; pc+=b
-    -- Superoperators (see RegBytecode.fuse): each fuses an adjacent straight-line
-    -- pair into one opcode. Extend the opcode set, so they permute/alias normally.
+    -- Superoperators (see fuse): each fuses an adjacent straight-line pair into one opcode.
     "FUSEMM",     -- MOVE;MOVE
     "FUSELL",     -- LOADK;LOADK
     "FUSEGG",     -- GETGLOBAL;GETGLOBAL
@@ -65,9 +56,8 @@ function RegBytecode.opcodes()
     return result
 end
 
--- Superoperator peephole: rewrites the first slot of an adjacent straight-line
--- pair to a fused opcode (second slot kept as jump-target fallback). `enabled`
--- gates each pair kind (MM/LL/GG); nil = all. Mutates the proto tree in place.
+-- Superoperator peephole: fuses the first of an adjacent pair, keeping the second as a
+-- jump target. `enabled` gates pair kinds (MM/LL/GG), nil = all. Mutates the tree in place.
 local FUSE = {
     [by_name.MOVE]      = { [by_name.MOVE]      = { op = by_name.FUSEMM, k = "MM" } },
     [by_name.LOADK]     = { [by_name.LOADK]     = { op = by_name.FUSELL, k = "LL" } },
@@ -91,22 +81,18 @@ function RegBytecode.fuse(proto, enabled)
     return proto
 end
 
--- Encode a constant operand as a negative RK reference (registers are >= 0, so a
--- negative operand always names constant index -x). Constant indices start at 1.
+-- Encode a constant operand as a negative RK reference; registers are >= 0, so negative names a constant.
 function RegBytecode.rk_const(kidx) return -kidx end
 function RegBytecode.rk_is_const(x) return x < 0 end
 function RegBytecode.rk_index(x) return -x end
 
 -- ---- serialization ----------------------------------------------------------
--- A compact binary encoding of the proto tree, so the program can be ChaCha-
--- encrypted and embedded (no source text, no plaintext bytecode). Integers are
--- little-endian; signed operands are stored biased by 2^31. Numeric constants
--- round-trip through %.17g. No load/loadstring is involved.
+-- Compact binary encoding of the proto tree for embedding (no source, no plaintext bytecode).
+-- Little-endian ints, signed operands biased by 2^31, numbers round-trip via %.17g.
 
 local char, byte, format, concat = string.char, string.byte, string.format, table.concat
 
--- Portable byte-wise XOR (bit32 on 5.3/Luau, `bit` on LuaJIT/luabitop, arithmetic
--- fallback on plain 5.1) so the foged-in-memory blob survives every host.
+-- Portable byte-wise XOR (native bit lib where present, arithmetic fallback otherwise).
 local bxor
 do
     local b32 = bit32 or rawget(_G, "bit") or rawget(_G, "bit32")
@@ -194,18 +180,9 @@ function RegBytecode.decode(data)
     return r_proto()
 end
 
--- ---- opaque in-memory encoding -------------------------------------------------
--- The register backend never materializes the decoded program as plain Lua
--- tables. `encode_opaque` flattens every proto's constant pool and instruction
--- stream into ONE binary string (build-fogged byte-wise) plus a numeric region
--- index. The interpreter decodes each instruction/constant from that string on
--- demand, so a debug.getupvalue / getinfo dump of an active VM frame yields an
--- undecoded, fogged blob -- not a ready-to-read {code, constants, protos} tree.
---
--- Returns (fogged_byte_string, regions) where regions[0] is the main proto.
--- Each region is { n = numparams, v = is_vararg(1/0), k = #constants,
--- c = #instructions, d = instruction-stream offset, o = constant offsets,
--- p = child region ids, u = upvalue descriptors ({local?, index}) }.
+-- Opaque in-memory encoding. encode_opaque flattens every proto's constants and
+-- instructions into one fogged binary string plus a region index, decoded on demand
+-- so a dumped frame is just a fogged blob. Returns (string, regions), regions[0] main.
 local function bi32(out, n)
     n = (n + 2147483648) % 4294967296
     out[#out + 1] = char(n % 256)
@@ -228,8 +205,7 @@ function RegBytecode.encode_opaque(mainproto, fog, encrypt)
     end
     visit(mainproto)
 
-    -- Flatten each proto region in id order (constants then 13-byte
-    -- instructions) into one byte stream, remembering per-constant offsets.
+    -- Flatten each region in id order (constants then instructions), tracking constant offsets.
     local buf, pos = {}, 0
     local out = {}
     for id = 0, next_id - 1 do
@@ -273,19 +249,14 @@ function RegBytecode.encode_opaque(mainproto, fog, encrypt)
     local raw = concat(buf)
     local out_b = {}
     if encrypt then
-        -- Real ChaCha20 stream cipher: the byte stream is XORed with an RFC 8439
-        -- ChaCha20 keystream keyed off the per-build fog. The reg-runtime decoder
-        -- derives the identical keystream (round-trip verified by the differential
-        -- and reg_vm_fibonacci/encrypt suites). Keystream generated once; no small
-        -- period to peel and no cheap per-byte hash to shortcut.
+        -- ChaCha20 (RFC 8439) keystream XOR keyed off the per-build fog; the reg-runtime
+        -- decoder derives the same keystream.
         local ChaCha = require("src.core.chacha")
         local key, nonce, ctr = ChaCha.derive(fog)
         local ks = ChaCha.keystream(key, nonce, ctr, #raw)
         for i = 1, #raw do out_b[i] = char(bxor(byte(raw, i), ks[i])) end
     else
-        -- Legacy per-position keystream (repeating fog byte XOR a per-offset hash)
-        -- keyed off the fog seed. Portable all-integer math; the reg-runtime decoder
-        -- mirrors this byte-for-byte.
+        -- Legacy per-position keystream (fog byte XOR a per-offset hash); reg-runtime mirrors it byte-for-byte.
         local nf = #fog
         local ks_key = 5381
         for i = 1, nf do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end

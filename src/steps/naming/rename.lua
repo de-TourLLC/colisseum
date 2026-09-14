@@ -49,9 +49,7 @@ function Step.apply(source, options)
     local type_depth = 0
     local local_function = false
     local function_header = false
-    -- A `repeat ... until <cond>` keeps the repeat scope open through its
-    -- condition: in Lua the condition sees the locals declared inside the body.
-    -- We defer the pop until the condition expression has provably ended.
+    -- repeat...until keeps its scope open through the condition (which sees the body's locals), so defer the pop until the condition ends.
     local repeat_condition = false
     local repeat_depth = 0
     -- `local x = <init>`: names aren't in scope in their own initializer, so
@@ -60,9 +58,7 @@ function Step.apply(source, options)
     local is_local_decl = false
     local local_pending = {}
     local reserved_value = { ["true"] = true, ["false"] = true, ["nil"] = true }
-    -- Tokens that CONTINUE an expression after a value (so the local's initializer
-    -- is not finished). Anything else following a value-ending token starts a new
-    -- statement, which is where the initializer ends.
+    -- Tokens that continue an expression after a value; anything else after a value-ending token starts a new statement.
     local continuation = {
         ["+"] = true, ["-"] = true, ["*"] = true, ["/"] = true, ["%"] = true, ["^"] = true,
         [".."] = true, ["=="] = true, ["~="] = true, ["<"] = true, [">"] = true, ["<="] = true,
@@ -90,9 +86,7 @@ function Step.apply(source, options)
         return tokens[index + 1]
     end
 
-    -- Tokens that cannot appear inside an expression: seeing one at bracket depth 0
-    -- right after `until <expr>` means the outer statement/block ended, so the
-    -- repeat scope (still active for the condition) must be closed before it.
+    -- Tokens that can't appear in an expression; one at depth 0 after until <expr> means the block ended, so close the repeat scope first.
     local statement_boundary_keywords = {
         ["local"] = true, ["if"] = true, ["while"] = true, ["for"] = true,
         ["do"] = true, ["function"] = true, ["return"] = true, ["break"] = true,
@@ -128,10 +122,7 @@ function Step.apply(source, options)
                 end
             end
         end
-        -- A local's initializer ends once its value is complete and the next token
-        -- starts a new statement (i.e. the previous token ended a value and this one
-        -- does not continue the expression). Clearing here lets later uses of the new
-        -- locals resolve to them, not the outer scope. `;` always ends it.
+        -- A local's initializer ends when its value is complete and the next token starts a new statement; clearing here lets later uses resolve to the new locals. ; always ends it.
         if in_local_rhs and (value == ";"
             or (ends_value(before) and not continuation[value] and token.kind ~= "string")) then
             in_local_rhs = false
@@ -141,18 +132,13 @@ function Step.apply(source, options)
             local field = before and (before.value == "." or before.value == ":")
             local table_key = after and after.value == "=" and braces > 0
             if parameters then
-                -- Declare real parameter names, but never the identifiers inside a
-                -- Luau type annotation (`p: SomeType`). Binding a type name would
-                -- rename every later use of it -- including globals such as
-                -- `string` in `string.reverse`.
+                -- Declare real parameter names, but not identifiers inside a Luau type annotation (p: SomeType); binding a type name would rename later uses of it.
                 if not param_type then
                     local binding = declaration(current, value, generator, declarations)
                     declarations[token.start] = binding
                 end
             elseif local_function then
-                -- `local function f` binds f in the CURRENT scope (visible after the
-                -- definition), then opens a new scope for its parameters and body so
-                -- the closing `end` pops that inner scope, not the enclosing one.
+                -- local function f binds f in the current scope, then opens a new scope for its params and body so the closing end pops that inner one.
                 local binding = declaration(current, value, generator, declarations)
                 declarations[token.start] = binding
                 push("function")
@@ -175,9 +161,7 @@ function Step.apply(source, options)
                     for_declaration = false
                 end
             elseif not field and not table_key then
-                -- Inside a `local` initializer, a reference to a name being declared
-                -- by the SAME statement is a use of the OUTER binding (or a global),
-                -- never the new local.
+                -- Inside a local initializer, a reference to a name declared by the same statement uses the outer binding (or a global), not the new local.
                 local binding
                 if in_local_rhs and local_pending[value] then
                     binding = current.parent and find(current.parent, value) or nil
@@ -189,12 +173,7 @@ function Step.apply(source, options)
         elseif value == "local" then
             declaring = true
             is_local_decl = true
-            -- A self-reference guard is PER-STATEMENT: names declared by an earlier
-            -- `local` (e.g. `local length;` with no initializer) are ordinary
-            -- locals in the current statement's RHS and must be renamed like any
-            -- other reference. Leaving stale entries here makes the binder resolve
-            -- such references to the outer scope, keeping them unrenamed (a bare
-            -- global, and a dangling-global crash for the embedded VM decoder).
+            -- The self-reference guard is per-statement; names from an earlier local are ordinary locals in this statement's RHS and must be renamed. Stale entries here would leave them unrenamed.
             local_pending = {}
         elseif declaring and value == "function" then
             declaring = false
@@ -236,9 +215,7 @@ function Step.apply(source, options)
         elseif value == "end" then
             pop()
         elseif value == "until" then
-            -- `repeat ... until <cond>`: do NOT pop here. The condition still sees
-            -- the repeat scope; the deferred-pop logic above closes it at the first
-            -- token that provably ends the condition expression.
+            -- repeat...until: don't pop here. The condition still sees the repeat scope; the deferred-pop logic above closes it when the condition ends.
             repeat_condition = true
             repeat_depth = 0
         elseif declaring and value == "=" then

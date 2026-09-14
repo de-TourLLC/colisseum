@@ -1,11 +1,5 @@
--- numeric-fibonacci: replaces bounded decimal-integer literals with indexed reads
--- from a pooled table whose values are decoded ONCE at load from Zeckendorf
--- (Fibonacci-coding) codewords. A plaintext constant like 1337 becomes `_K[3]`,
--- and `_K` is filled at chunk start by a tiny injected decoder. Semantics-preserving
--- (every codeword is self-checked at build time to decode back to its exact value)
--- and Luau/Roblox-safe: the decoder is pure integer math over string bytes -- no
--- bitops, no loadstring -- and, crucially, it runs once at load, so hot loops pay a
--- table lookup, not a re-decode. Values are deduplicated; bounded; per-build named.
+-- Replace bounded integer literals with indexed reads from a pool decoded once at
+-- load from Fibonacci/Zeckendorf codewords. Pure integer math, no loadstring.
 
 local Lexer = require("src.core.lexer")
 local Validate = require("src.core.validate")
@@ -20,8 +14,7 @@ Step.metadata = {
     description = "Rewrites bounded integer literals as indexed reads from a Fibonacci/Zeckendorf-decoded pool built once at load."
 }
 
--- Largest integer we encode. The decoder builds the coding sequence to an index
--- that comfortably exceeds this, so every accepted value round-trips.
+-- Largest integer we encode; the decoder's sequence comfortably exceeds it.
 local MAX_VALUE = 2147483647
 
 local function positive(options, name, default)
@@ -46,8 +39,7 @@ function Step.apply(source, options)
     local body = source:sub(#shebang + 1)
 
     local tokens = Lexer.scan(body)
-    -- Qualifying integer literals, left-to-right. Only pure decimal integers in range
-    -- (never hex/float/exponent tokens -- they carry '.', 'x', or 'e').
+    -- Qualifying integer literals, left to right. Pure decimal integers in range only.
     local hits = {}
     for _, token in ipairs(tokens) do
         if token.kind == "number" and token.value:match("^%d+$") then
@@ -59,8 +51,7 @@ function Step.apply(source, options)
     end
     if #hits == 0 then return source end
 
-    -- Deduplicate values into a pool; each distinct value gets one index. A codeword
-    -- that fails to round-trip is dropped (its literals are left untouched).
+    -- Deduplicate into a pool, one index per value. Codewords that fail to round-trip are dropped.
     local index_of, pool_bits, pool_size = {}, {}, 0
     local function pool_index(value)
         if index_of[value] then return index_of[value] end
@@ -87,10 +78,8 @@ function Step.apply(source, options)
     end
     if replaced == 0 then return source end
 
-    -- Pool initializer: build the coding sequence 1,2,3,5,8,... once, then decode
-    -- each codeword into _K[i]. `_d` sums the Fibonacci numbers whose usage bit is
-    -- set, stopping at the "11" terminator (byte 49 is '1'). All local to a `do`
-    -- block, so only _K escapes.
+    -- Pool initializer: build the coding sequence once, then decode each codeword
+    -- into _K[i]. All local to a `do` block, so only _K escapes.
     local fib_name = prefix .. "f"
     local dec_name = prefix .. "d"
     local init = {}
@@ -108,8 +97,7 @@ function Step.apply(source, options)
     local result = shebang .. table.concat(init) .. body
     local valid = Validate.syntax(result)
     if not valid then
-        -- Any unexpected splice context: ship the original untouched rather than
-        -- emit something that will not load.
+        -- Unexpected splice context: ship the original untouched.
         return source
     end
     Step.last_metadata = { replaced = replaced, pool = pool_size, candidates = #hits }

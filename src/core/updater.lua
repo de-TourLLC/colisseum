@@ -1,8 +1,6 @@
--- Optional self-update check for the CLI. Compares the local git checkout against
--- its GitHub `origin/main` and, only on request, fast-forwards to it. Every step is
--- fail-safe: any missing tool, non-git checkout, or command error makes the check a
--- silent no-op, so obfuscation is never blocked by the updater. It NEVER discards
--- local work -- a dirty tree or a diverged history refuses the update with guidance.
+-- Optional self-update check for the CLI: compares the checkout against origin/main
+-- and, on request, fast-forwards. Any error is a silent no-op, and a dirty or
+-- diverged tree refuses the update rather than discarding local work.
 
 local Updater = {}
 
@@ -16,10 +14,8 @@ function Updater.configure(root)
     if type(root) == "string" and root ~= "" then repo_root = root end
 end
 
--- Prefix that forces git to be STRICTLY non-interactive. Alongside VSCode's own Git
--- integration and the Windows Git Credential Manager, an unauthenticated fetch of a
--- private remote would otherwise pop a dialog or block on a prompt and hang the CLI.
--- These make git fail fast instead; the failure is then treated as a silent no-op.
+-- Force git to be non-interactive so an auth prompt on a private remote can't hang
+-- the CLI; git fails fast instead and the failure becomes a no-op.
 local function env_prefix()
     if IS_WIN then
         return 'set "GIT_TERMINAL_PROMPT=0" && set "GCM_INTERACTIVE=never" && '
@@ -77,12 +73,9 @@ local function behind_ahead()
     return tonumber(behind), tonumber(ahead)
 end
 
--- Check for an update. Runs a fresh, quiet `git fetch` on EVERY call (the check is
--- automatic, not cached), then reports whether the local checkout is behind
--- origin/main. Returns a table { behind, ahead, current, latest } when behind, or
--- nil otherwise (including any error or non-applicable case). If offline, the fetch
--- simply fails and we fall back to the last-known origin/main ref -- still a no-op,
--- never an error.
+-- Fetch quietly and report whether the checkout is behind origin/main. Returns
+-- { behind, ahead, current, latest } when behind, else nil. Offline just falls back
+-- to the last-known ref.
 function Updater.check(opts)
     if not is_git_repo() then return nil end
     if not origin_is_github() then return nil end

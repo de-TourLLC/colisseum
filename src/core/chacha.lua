@@ -1,15 +1,6 @@
--- RFC 8439 ChaCha20 keystream generator, portable across Lua 5.1 / LuaJIT / Luau.
--- Used as the register VM's byte-stream cipher: the fogged program blob is XORed
--- with a ChaCha20 keystream (a real stream cipher) instead of an ad-hoc hash mask.
--- The keystream is derived once at VM start and applied on demand, so the decoded
--- program never materializes in memory.
---
--- All 32-bit operations are exact on IEEE doubles with no bit library required:
---   * add mod 2^32 : (a + b) % 2^32                      (sum < 2^33 < 2^53)
---   * rotate-left  : (x % 2^(32-n))*2^n + floor(x/2^(32-n))  (both parts < 2^32)
---   * xor          : native bit32/bit if present, else a portable arithmetic xor
--- so build-time (this module) and the inlined runtime copy agree byte-for-byte on
--- every host.
+-- RFC 8439 ChaCha20 keystream generator, portable. The register VM XORs its fogged
+-- program blob with this keystream so the decoded program never sits in memory.
+-- 32-bit math is exact on doubles (native bit xor when present) so build and runtime agree.
 
 local ChaCha = {}
 
@@ -56,8 +47,7 @@ local function quarter(s, a, b, c, d)
     s[c] = add32(s[c], s[d]); s[b] = rotl32(xor32(s[b], s[c]), 7)
 end
 
--- One 64-byte ChaCha20 block. `key` is 8 words, `nonce` is 3 words, `counter` a
--- word. Returns 16 output words (little-endian bytes are emitted by keystream()).
+-- One 64-byte ChaCha20 block (8 key words, 3 nonce words, 1 counter word). Returns 16 words.
 local function block(key, counter, nonce)
     local s = {
         1634760805, 857760878, 2036477234, 1797285236,
@@ -77,8 +67,7 @@ local function block(key, counter, nonce)
 end
 ChaCha.block = block
 
--- Build 8 key words + 3 nonce words + a start counter from a small byte array
--- (the per-build fog). Deterministic on both build and runtime sides.
+-- Derive 8 key words, 3 nonce words and a start counter from the per-build fog bytes.
 function ChaCha.derive(fog)
     local nf = #fog
     -- Expand the fog into 44 bytes with a simple multiplicative PRNG (portable).

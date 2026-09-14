@@ -1,8 +1,7 @@
 local Step = { name = "vm", version = 4 }
 
--- The VM backends embed their input as encrypted numeric data inside a fixed,
--- always-valid chunk template, so the (large) output never needs re-lexing. This
--- skips an expensive full-parse validation of the final bundle in the pipeline.
+-- The VM backends embed input as encrypted numeric data in a fixed, always-valid chunk
+-- template, so the output never needs re-lexing. Skips a full-parse validation of the bundle.
 Step.emits_valid = true
 
 Step.metadata = {
@@ -11,9 +10,8 @@ Step.metadata = {
     description = "Compiles source to Luau bytecode, encrypts it (ChaCha20), and runs it through the embedded Fiu VM. No loadstring."
 }
 
--- Locate the bundled Luau bytecode compiler (built from vendor/Luau by
--- tools/build-luau.bat). Resolved relative to the working directory, which is the
--- repository root when invoked through cli.lua.
+-- Locate the bundled Luau bytecode compiler (built by tools/build-luau.bat), relative to
+-- the working directory, which is the repo root when invoked through cli.lua.
 local function bundled_compiler()
     local suffix = package.config:sub(1, 1) == "\\" and ".exe" or ""
     local candidates = {
@@ -29,16 +27,14 @@ local function bundled_compiler()
     return nil
 end
 
--- Package `source` into a self-contained chunk: embeds the Fiu Luau VM, carries
--- the program as ChaCha20-encrypted Luau bytecode, decrypts+verifies with bitwise
--- ops (no loadstring), runs it. Source never ships as text or plaintext bytecode.
+-- Package `source` into a self-contained chunk: embeds the Fiu Luau VM, carries the program
+-- as ChaCha20-encrypted bytecode, decrypts+verifies with bitwise ops (no loadstring), runs it.
 function Step.apply(source, options)
     if type(source) ~= "string" then error("vm: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("vm: options must be a table") end
     options = options or {}
-    -- Default backend: the native bytecode VM (portable Lua + Luau/Roblox). The Fiu
-    -- backend (options.backend == "fiu") runs real Luau bytecode for full Luau
-    -- syntax, but needs the Luau compiler and ships readable interpreter source.
+    -- Default backend is the native bytecode VM (portable Lua + Luau/Roblox). The fiu backend
+    -- runs real Luau bytecode for full syntax, but needs the Luau compiler and ships readable source.
     if options.backend == "register" then
         return require("src.steps.security.register-vm").apply(source, options)
     end

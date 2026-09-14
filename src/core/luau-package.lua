@@ -2,8 +2,7 @@ local Entropy = require("src.core.entropy")
 
 local Package = {}
 
--- ChaCha20 needs 32-bit bitwise ops. Colisseum runs under LuaJIT/Lua for builds,
--- where either bit32 (Lua 5.2+) or LuaBitOp (`bit`) is present.
+-- ChaCha20 needs 32-bit bitwise ops from bit32 or LuaBitOp.
 local bit = bit32 or _G.bit
 if not bit then error("luau-package: ChaCha20 requires bit32 or bit") end
 local bxor, band, bor = bit.bxor, bit.band, bit.bor
@@ -21,10 +20,8 @@ local function digest(value, seed)
     return state
 end
 
--- Two independent 31-bit folds -> a 62-bit string of entropy for keying. Folding
--- from two seeds means distinct sources stay distinct across the wider space
--- instead of collapsing onto a single 31-bit value (reducing cross-build key
--- collisions). Kept purely integer so it runs on 32-bit Lua/LuaJIT/Luau alike.
+-- Two 31-bit folds joined into a 62-bit entropy string, so distinct sources stay separated.
+-- Integer-only.
 local function wide_digest(value, seed)
     local a = digest(value, (seed or 2166136261))
     local b = digest(value, (seed or 1299721))
@@ -32,11 +29,8 @@ local function wide_digest(value, seed)
 end
 
 local function random_key(data, seed)
-    -- Seed from a 62-bit fold of build entropy so distinct builds (even with the
-    -- ~31-bit PRNG state elsewhere) derive well-separated key streams. Given an
-    -- explicit seed this is the only input, so identical seeds reproduce the
-    -- exact same key (reproducible builds); without one `seed` is already a fresh
-    -- entropy-collect string unique per build.
+    -- Seed from a 62-bit fold of build entropy so builds get separated key streams;
+    -- an explicit seed reproduces the same key.
     local state = digest(wide_digest(data, digest(tostring(seed))))
     local key = {}
     for index = 1, 32 do
@@ -114,8 +108,7 @@ local function read(path)
     return value
 end
 
--- Per-build marker prefix so the loader carries no fixed scannable identifiers.
--- Deterministic once the seed is known (reproducible builds).
+-- Per-build marker prefix so the loader has no fixed scannable identifiers.
 local function marker_prefix(seed)
     local state = digest("names", digest(tostring(seed)))
     local prefix = "coli_"
@@ -126,10 +119,8 @@ local function marker_prefix(seed)
     return prefix
 end
 
--- Rename this module's own identifiers to the per-build prefix. `underscores` is
--- "_" for the ChaCha seal (its locals are _x) or "__" for the Fiu wrapper (its
--- locals are __x). _G is preserved; embedded Fiu source / bytecode are never
--- touched because renaming is applied before they are spliced in.
+-- Rename this module's locals to the per-build prefix. `underscores` is "_" for the
+-- seal, "__" for the Fiu wrapper. _G is preserved, and this runs before Fiu is spliced in.
 local function mangle(code, underscores, prefix)
     code = code:gsub("_G", "\1")
     code = code:gsub("%f[%w_]" .. underscores .. "(%a[%w_]*)", prefix .. "%1")
@@ -137,9 +128,8 @@ local function mangle(code, underscores, prefix)
     return code
 end
 
--- Encrypt `data` (Luau bytecode) and return a Lua expression that reconstructs the
--- plaintext at runtime: two chained ciphers + an integrity checksum, decrypted with
--- bitwise ops (no loadstring). The result is handed to Fiu's luau_load.
+-- Encrypt bytecode into a Lua expression that rebuilds the plaintext at runtime:
+-- two chained ciphers and a checksum, bitwise ops only (no loadstring). Handed to Fiu's luau_load.
 local function seal(data, seed, prefix)
     local key = random_key(data, seed)
     local payload = chacha(data, key)
@@ -155,9 +145,8 @@ local function seal(data, seed, prefix)
     local outer = {}
     for index = 1, #payload do outer[index] = (payload[index] + outer_mask[index]) % 256 end
     local const_key = (digest(tostring(seed or "") .. "|CC|") % 2147483646) + 1
-    -- Second, seeded plaintext fold tied to the build: the loader verifies BOTH
-    -- the keyed integrity checksum and this independent digest, so a patched
-    -- bytecode stream (or a recomputed single checksum) still aborts.
+    -- Second seeded plaintext fold; the loader checks both this and the keyed
+    -- checksum, so a patched stream still aborts.
     local fold2_seed = (digest(tostring(seed or "") .. "|F2|") % 2147483646) + 1
     local function fold2(value)
         local state = fold2_seed % 2147483647
@@ -219,8 +208,8 @@ function Package.build(bytecode, fiu_source, options)
     local seed = Entropy.normalize(options.seed) or Entropy.collect()
     local prefix = marker_prefix(seed)
     local environment_expr = require("src.steps.security.environment").expression()
-    -- Minify the embedded Fiu VM (strip comments/formatting) before splicing. No
-    -- scope renaming (it corrupts Luau); guarded so a failure just ships readable.
+    -- Minify the embedded Fiu VM before splicing; no scope renaming (corrupts Luau).
+    -- Guarded, so a failure just ships the readable source.
     if options.obfuscate_backend ~= false then
         local ok_min, minified = pcall(function() return require("src.steps.minify").apply(fiu_source) end)
         if ok_min and type(minified) == "string" and #minified > 0 then fiu_source = minified end
@@ -240,19 +229,13 @@ if __close then __close() end
 if not __ok then error(__a, 0) end
 return __a, __b, __c, __d
 ]=]
-    -- Argument order MUST match the template's placeholder order:
-    --   1) %s  -> the embedded Fiu VM source
-    --   2) __bytecode = %s   -> the sealed bytecode reconstruction
-    --   3) __environment = %s -> the sandbox environment expression
-    -- (These last two were previously swapped, so __bytecode received the
-    -- environment table and luau_load got a table instead of the bytecode string.)
+    -- Argument order must match the template placeholders: Fiu source, sealed bytecode,
+    -- environment expression. The last two are easy to swap, so keep them in this order.
     return mangle(template, "__", prefix):format(fiu_source, seal(bytecode, seed, prefix), environment_expr)
 end
 
--- Accept only a safe relative Fiu source path. Absolute paths, drive letters,
--- parent traversal (".."), and control/shell characters are rejected so a hosted
--- obfuscator cannot turn `--fiu` into a read-arbitrary-file + embed-and-run
--- primitive. A bare filename (no separators) resolves under vendor/Fiu/.
+-- Accept only a safe relative Fiu path; reject absolute paths, drive letters, "..",
+-- and control chars, so a hosted obfuscator can't read arbitrary files. A bare filename resolves under vendor/Fiu/.
 local function safe_fiu_path(path)
     if path == nil then return "vendor/Fiu/Source.lua" end
     if type(path) ~= "string" or path == "" then return nil end

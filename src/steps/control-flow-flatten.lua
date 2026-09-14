@@ -109,13 +109,7 @@ function Step.apply(source, options)
     repeat dispatch = prng:identifier(prng:range(6, 10))
     until not body:find(dispatch, 1, true) and not hoisted[dispatch]
 
-    -- Assign every logical state a distinct shuffled KEY (a permutation of 1..N,
-    -- plus the dead-state keys above N), and make the dispatcher test on the KEY
-    -- rather than the logical index. Combined with non-linear encoded transitions
-    -- and self-looping dead states, this hides the state machine from a textual
-    -- scan: there is no literal `dispatch==1`..`dispatch==N` chain, no linear
-    -- next==index+1 edge pattern, and no enumerable set of reachable transitions.
-    -- keys[i] = the distinct shuffled key of logical state i (permutation of 1..N).
+    -- Give each state a distinct shuffled key (permutation of 1..N) and dispatch on the key, not the index, so there's no literal dispatch==1..N chain to scan.
     local keys = {}
     for index = 1, #states do keys[index] = index end
     for index = #keys, 2, -1 do
@@ -133,9 +127,7 @@ function Step.apply(source, options)
         order[index], order[swap] = order[swap], order[index]
     end
 
-    -- Number of synthetic dead states (keys above #states) whose branches are
-    -- never reached and whose transitions self-loop, so a naive reachability
-    -- analysis cannot terminate on them.
+    -- Count of synthetic dead states (keys above #states) that self-loop and are never reached.
     local fake_count = prng:range(1, 2)
 
     local parts = {}
@@ -153,11 +145,7 @@ function Step.apply(source, options)
         end
         parts[#parts + 1] = branch .. "\n"
     end
-    -- Dead states: unreachable sentinel branches (the dispatcher never sets these
-    -- keys) carrying harmless local declarations that loop back onto themselves.
-    -- They add noise edges to the recovery graph, confuse naive state enumeration,
-    -- and -- because the while-loop only exits at 0 -- make a naive reachability
-    -- analysis diverge, without ever executing or changing the program.
+    -- Dead states: unreachable branches that self-loop, adding noise edges without ever executing.
     for _ = 1, fake_count do
         local key = #states + _
         local dead = "elseif " .. dispatch .. "==" .. key .. " then local " ..

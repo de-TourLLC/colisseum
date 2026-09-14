@@ -3,13 +3,11 @@ local Lexer = require("src.core.lexer")
 local Step = {}
 Step.name = "field-index"
 Step.version = 2
--- Every rewrite turns `a.b` into `a["<b>"]`, which is exactly equivalent field
--- access in Lua, so the result is valid by construction.
+-- Every rewrite turns `a.b` into `a["<b>"]`, equivalent field access, so the result is valid.
 Step.emits_valid = true
 
--- Rewrite dotted field access `a.b` into bracket form `a["\098"]` (key as decimal
--- escapes) so field/method names can't be grepped. Stdlib/host singletons stay in
--- dot form (bracket form breaks the Fiu `--secure` backend's stdlib imports).
+-- Rewrite dotted access `a.b` into bracket form `a["\098"]` (decimal-escaped key)
+-- so field names can't be grepped. Stdlib/host singletons stay in dot form.
 local protected_bases = {
     string = true, table = true, math = true, coroutine = true, debug = true,
     os = true, io = true, utf8 = true, bit32 = true, buffer = true, task = true,
@@ -36,8 +34,7 @@ function Step.apply(source, options)
         if token.kind ~= "comment" then sig[#sig + 1] = token end
     end
 
-    -- One ordered pass: track whether we are inside a `function <name>...(` header
-    -- (where a dotted name may not be bracketed) and collect the dots to rewrite.
+    -- One pass: skip dots inside a `function <name>...(` header, collect the rest to rewrite.
     local points = {}
     local in_def_header = false
     for i = 1, #sig do
@@ -50,9 +47,8 @@ function Step.apply(source, options)
         elseif token.kind == "symbol" and token.value == "." and not in_def_header then
             local name = sig[i + 1]
             local base = sig[i - 1]
-            -- Only rewrite when the base is a plain identifier that is not a
-            -- protected library/singleton. A base like `)`/`]`/`}` (e.g.
-            -- `(expr).field`) is a user value and is always safe to rewrite.
+            -- Rewrite only when the base is a plain, unprotected identifier.
+            -- A base like `)`/`]`/`}` is a user value and always safe.
             local base_ok = base == nil or base.kind ~= "identifier" or not protected_bases[base.value]
             if name ~= nil and name.kind == "identifier" and base_ok then
                 points[#points + 1] = { dot = token, name = name }

@@ -1,5 +1,5 @@
--- Per-run entropy + a small deterministic PRNG (MINSTD/Lehmer, pure integer,
--- portable). collect() varies every build; an explicit seed replays exactly.
+-- Per-run entropy plus a deterministic PRNG (MINSTD/Lehmer).
+-- collect() varies every build; an explicit seed replays exactly.
 
 local Entropy = {}
 
@@ -31,14 +31,8 @@ function Entropy.normalize(seed)
     return fold(tostring(seed))
 end
 
--- A fresh strong seed for this build. Mixes several independent entropy
--- sources so identical input never yields identical output, and the counter
--- guarantees two calls in the same clock tick still diverge.
---
--- The returned "seed" is a wide string (two independent 31-bit folds = ~62 bits
--- of entropy) rather than a single 31-bit integer. Derive PRNG state from it
--- via Entropy.fold, which folds the full material down to a PRNG state; the
--- full width is retained when the string itself is used to key the ciphers.
+-- Fresh per-build seed: a wide string of two 31-bit folds (~62 bits). The counter
+-- keeps two calls in the same clock tick from colliding.
 function Entropy.collect()
     counter = counter + 1
     local material = table.concat({
@@ -48,15 +42,13 @@ function Entropy.collect()
         tostring(Entropy),     -- table address, another ASLR source
         tostring(counter)
     }, "|")
-    -- Fold the same material twice from two different starting states and join,
-    -- so the returned seed carries ~2x the entropy of a single 31-bit fold.
+    -- Fold the material from two starting states and join for wider entropy.
     local a = fold(material, 2166136261)
     local b = fold(material, 2654435761)
     return tostring(a) .. ":" .. tostring(b)
 end
 
--- Derive an independent sub-seed for a labelled consumer from a base seed, so
--- distinct steps in one build never share a keystream.
+-- Derive an independent sub-seed for a labelled consumer, so steps never share a keystream.
 function Entropy.mix(base, label)
     local state = Entropy.normalize(base) or Entropy.collect()
     return fold(tostring(label), state)
@@ -65,8 +57,7 @@ end
 local Prng = {}
 Prng.__index = Prng
 
--- Build a PRNG. With a seed it is deterministic; without one it draws a fresh
--- seed from Entropy.collect() so each instance is unique.
+-- Build a PRNG: deterministic with a seed, otherwise seeded from Entropy.collect().
 function Entropy.prng(seed)
     local state = Entropy.normalize(seed) or Entropy.collect()
     return setmetatable({ state = state }, Prng)
@@ -94,8 +85,7 @@ end
 local ALPHA = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 local ALNUM = ALPHA .. "0123456789"
 
--- A random Lua-safe identifier. Always leads with "_" then a letter, so it can
--- never collide with a reserved word and is always a valid identifier.
+-- Random Lua-safe identifier. Leads with "_" then a letter, so it never hits a reserved word.
 function Prng:identifier(length)
     length = length or self:range(6, 12)
     local head = self:range(1, #ALPHA)

@@ -14,8 +14,7 @@ local function encode_plain(value)
     return "string.char(" .. table.concat(bytes, ",") .. ")"
 end
 
--- Seeded: each literal gets its own keystream seed, so identical strings encode
--- to different byte arrays every build and no literal survives as a fixed value.
+-- Seeded: each literal gets its own keystream seed, so identical strings encode differently each build.
 local function encode_keyed(value, prng, decoder)
     local literal_seed = prng:range(1, MASK_MOD - 1)
     local state, bytes = literal_seed, {}

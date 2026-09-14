@@ -11,8 +11,7 @@ Step.metadata = {
     description = "Adds bounded, never-called dead decoy functions."
 }
 
--- Reject anything that is not a positive integer, mirroring garbage-code's
--- `limit` helper so the two noise steps validate their options identically.
+-- Reject non-positive-integers, mirroring garbage-code's `limit` helper.
 local function limit(options, name, default)
     local value = options[name]
     if value == nil then return default end
@@ -29,9 +28,8 @@ local function check_source(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
 
--- Side-effect-free right-hand sides. Every branch is a pure literal or an
--- arithmetic combination of the function's own prior locals, so a body can be
--- read as plausible logic yet can never touch a global, call anything, or fail.
+-- Side-effect-free right-hand sides: pure literals or arithmetic on the function's
+-- own prior locals, so a body looks plausible but can't touch a global or fail.
 local function value_expr(prng, priors)
     local kind = prng:range(1, 5)
     if kind == 1 then
@@ -43,22 +41,19 @@ local function value_expr(prng, priors)
     elseif kind == 4 then
         return "{" .. tostring(prng:range(0, 999)) .. ", " .. tostring(prng:range(0, 999)) .. "}"
     end
-    -- Reference an earlier local when one exists; this keeps the body wholly
-    -- self-contained (only its own locals) while looking like real dataflow.
+    -- Reference an earlier local when one exists, keeping the body self-contained.
     if priors and #priors > 0 then
         return priors[prng:range(1, #priors)] .. " + " .. tostring(prng:range(1, 99))
     end
     return tostring(prng:range(0, 999))
 end
 
--- Build one dead decoy function (pure locals, never called, so unreachable). The
--- shape and signature vary per decoy so it isn't a recurring scannable block.
+-- Build one dead decoy function; shape and signature vary so it isn't a recurring block.
 local function build_function(prng)
     local name = prng:identifier(prng:range(6, 12))
     local params = {}
     for _ = 1, prng:range(0, 2) do params[#params + 1] = prng:identifier(prng:range(4, 8)) end
-    -- Params seed the visible dataflow but stay pure (a param + literal), so the
-    -- body still only ever touches its own locals.
+    -- Params seed the dataflow but stay pure, so the body only touches its own locals.
     local locals, lines = {}, {}
     for _, p in ipairs(params) do locals[#locals + 1] = p end
     local count = prng:range(1, 4)
@@ -92,22 +87,19 @@ function Step.apply(source, options)
     local max_bytes = limit(options, "max_bytes", 4096)
     if max_functions > 64 then error(Step.name .. ": max_functions exceeds the hard limit") end
     if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
-    -- Deterministic given a seed; different seeds yield different decoys. A
-    -- fixed default keeps the step reproducible when no seed is supplied.
+    -- Deterministic given a seed; a fixed default keeps it reproducible without one.
     local prng = Entropy.prng(options.seed or "junk-functions")
     local shebang = source:match("^(#![^\n]*\n)") or ""
     local body = source:sub(#shebang + 1)
     local blocks, bytes = {}, 0
     for _ = 1, max_functions do
-        -- Frame each decoy with its own leading/trailing newline so it can never
-        -- fuse with a neighbouring token when spliced at a statement boundary.
+        -- Leading/trailing newline so the decoy can't fuse with a neighbouring token.
         local text = "\n" .. build_function(prng) .. "\n"
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    -- Scatter the decoys across random top-level statement boundaries instead of
-    -- stacking them into one contiguous prefix a deobfuscator could strip whole.
+    -- Scatter the decoys across random statement boundaries, not one strippable prefix.
     local result = shebang .. Safe.interleave(body, prng, blocks)
     local valid, message, position = Validate.syntax(result)
     if not valid then

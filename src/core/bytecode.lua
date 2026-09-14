@@ -1,10 +1,8 @@
--- Safe, deliberately small bytecode container for the parser AST.
--- This module never evaluates decoded data.
+-- Bytecode container for the parser AST. Never evaluates decoded data.
 local Bytecode = {}
 
 Bytecode.MAGIC = "CLBC"
--- Version 2 makes every variable-length instruction self describing.  The
--- opcode table and the public API remain unchanged.
+-- Version 2 makes every variable-length instruction self-describing.
 Bytecode.VERSION = 2
 Bytecode.LIMITS = {
     bytes = 16 * 1024 * 1024,
@@ -222,13 +220,7 @@ function Bytecode.compile(ast)
     return program
 end
 
--- Variable layouts (all counts are scalar integer operands):
--- chunk/table/do = count, refs; call = callee, count, refs;
--- function = name, local flag, parameter count, parameter names, body count, refs;
--- for = name, initial, limit, step flag, optional step, body count, refs;
--- repeat = body count, refs, condition; while = condition, body count, refs;
--- if = branch count, (condition, body count, refs)*, fallback count, refs;
--- local = name count, names, value count, refs; return = value count, refs.
+-- Validates the operand layout of one decoded instruction.
 local function layout(opcode, operands, id)
     local position = 1
     local function error_at(message) fail("invalid " .. opcode .. " layout at instruction " .. id .. ": " .. message) end

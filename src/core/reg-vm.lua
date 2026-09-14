@@ -1,11 +1,7 @@
--- Register VM facade: parse -> compile to register bytecode -> run. Returns a
--- table of the chunk's return values (result[1] is the first). Semantics match
--- reference Lua. No loadstring. Runs on Lua/LuaJIT and Luau (globals resolve via
--- options.environment, else getfenv(0), else _G).
---
--- The in-memory program is kept as an opaque, fogged byte stream (see
--- reg-bytecode.encode_opaque / reg-runtime), so even the development path never
--- materializes the decoded program as plain Lua tables.
+-- Register VM facade: parse, compile to register bytecode, run. Returns the chunk's
+-- return values. Runs on Lua/LuaJIT and Luau; globals come from options.environment,
+-- else getfenv(0), else _G. The program stays as a fogged byte stream in memory
+-- (see reg-bytecode.encode_opaque), never as plain Lua tables.
 
 local RegCompiler = require("src.core.reg-compiler")
 local RegBytecode = require("src.core.reg-bytecode")

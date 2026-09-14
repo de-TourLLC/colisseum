@@ -6,14 +6,10 @@ local Step = {}
 Step.name = "split-strings"
 Step.version = 1
 
--- Splits each plain quoted string literal into concatenated pieces so it never
--- appears verbatim: `"hello world"` -> `("he".."llo w".."orld")`. Only escape-free
--- simple literals are touched; the result is wrapped in parens to stay valid.
+-- Split each plain quoted string literal into concatenated pieces so it never appears verbatim.
 
--- Scan for quoted string literals that are safe to split: single/double quoted,
--- no backslash escapes, skipping comments and long strings. Mirrors the scanner
--- in constant-array.lua's collect_strings, additionally recording the quote char
--- so each piece can be re-quoted identically. Returns ordered occurrences.
+-- Scan for escape-free quoted literals safe to split, recording the quote char.
+-- Mirrors constant-array's collect_strings.
 local function collect_strings(body)
     local occurrences = {}
     local index, length = 1, #body
@@ -40,8 +36,7 @@ local function collect_strings(body)
                 finish = finish + 1
             end
             local value = body:sub(index + 1, finish - 1)
-            -- Only keep terminated literals with no backslash escapes; those are
-            -- the ones whose bytes can be relocated/re-quoted verbatim.
+            -- Only terminated, escape-free literals can be re-quoted verbatim.
             if finish <= length and not value:find("\\", 1, true) then
                 occurrences[#occurrences + 1] =
                     { start = index, finish = finish, value = value, quote = quote }
@@ -54,12 +49,9 @@ local function collect_strings(body)
     return occurrences
 end
 
--- Split `value` into `pieces` non-empty chunks at prng-chosen byte boundaries and
--- return the parenthesised concatenation, e.g. `("he".."llo w".."orld")`.
+-- Split `value` into `pieces` non-empty chunks at prng-chosen boundaries, returning the parenthesised concatenation.
 local function split_literal(value, quote, pieces, prng)
-    -- Choose `pieces - 1` distinct cut positions in [1, #value - 1]. Distinctness
-    -- keeps every piece non-empty; `pieces <= #value` guarantees enough slots so
-    -- the retry loop always terminates.
+    -- Choose `pieces - 1` distinct cut positions so every piece is non-empty.
     local want = pieces - 1
     local cuts, seen = {}, {}
     while #cuts < want do
@@ -71,9 +63,7 @@ local function split_literal(value, quote, pieces, prng)
     end
     table.sort(cuts)
 
-    -- Emit each chunk re-quoted with the original quote char. The value holds no
-    -- backslash and no occurrence of `quote` (an unescaped one would have ended
-    -- the literal), so re-quoting is safe without escaping.
+    -- Re-quote each chunk with the original quote char; the value is escape-free so this is safe.
     local out, previous = {}, 0
     for _, position in ipairs(cuts) do
         out[#out + 1] = quote .. value:sub(previous + 1, position) .. quote
@@ -95,9 +85,7 @@ function Step.apply(source, options)
 
     local occurrences = collect_strings(body)
 
-    -- Rebuild the body, replacing every literal of length >= 2 with its split
-    -- form. Shorter literals (0 or 1 char) cannot be split into non-empty pieces
-    -- and are left exactly as they were.
+    -- Rebuild the body, splitting every literal of length >= 2; shorter ones are left as-is.
     local out, cursor, splits = {}, 1, 0
     for _, occ in ipairs(occurrences) do
         if #occ.value >= 2 then
@@ -110,7 +98,7 @@ function Step.apply(source, options)
         end
     end
 
-    -- Nothing eligible: return the input untouched (genuinely nothing to split).
+    -- Nothing eligible: return the input untouched.
     if splits == 0 then return source end
 
     out[#out + 1] = body:sub(cursor)

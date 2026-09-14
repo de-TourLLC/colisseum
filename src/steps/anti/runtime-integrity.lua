@@ -1,19 +1,16 @@
--- runtime-integrity: prepends a startup guard that aborts if the runtime looks
--- tampered (self-consistency nonce, swapped core functions, or an installed debug
--- hook). A clean run passes silently; every check is conservative and pcall-wrapped.
+-- Prepends a startup guard that aborts on a tampered runtime (nonce mismatch, swapped
+-- core functions, or an installed debug hook). Clean runs pass silently; every check is pcall-wrapped.
 
 local Entropy = require("src.core.entropy")
--- Strip the guard's comments before emission so its design commentary never ships
--- (blanking preserves line boundaries, keeping runtime line numbers intact).
+-- Strip the guard's comments before emission (blanking keeps line numbers intact).
 local StripComments = require("src.steps.strip-comments")
 
 local Step = {}
 Step.name = "runtime-integrity"
 Step.version = 1
 
--- Build-time FNV-1a-style fold. This MUST mirror the hash emitted into the
--- guard below byte-for-byte so the runtime recomputation matches the value we
--- embed here. Returns an integer (< 2^31) so the guarded sum adds exactly.
+-- Build-time FNV-1a-style fold. Mirrors the hash emitted into the guard byte-for-byte
+-- so the runtime recomputation matches. Returns an integer (< 2^31) so the sum adds exactly.
 local function fold(value)
     local state = 2166136261 % 2147483647
     for index = 1, #value do
@@ -23,9 +20,8 @@ local function fold(value)
     return state
 end
 
--- Second, independent fold (seeded multiply-accumulate) emitted into the guard
--- as _ri_hash2. Different recurrence, per-build seed: recomputing the guard's
--- expected value requires replicating BOTH folds and the seed.
+-- Second independent fold (seeded multiply-accumulate), emitted as _ri_hash2. Different
+-- recurrence and per-build seed, so recomputing the expected value needs both folds and the seed.
 local function fold2(value, seed)
     local state = seed % 2147483647
     for index = 1, #value do
@@ -34,9 +30,8 @@ local function fold2(value, seed)
     return state
 end
 
--- The guard template. `_ri_` variable prefixes are salted per build (so two
--- builds never share identifiers) and the modulo operator is written `%%`
--- because the whole string is passed through string.format.
+-- Guard template. `_ri_` prefixes are salted per build; modulo is written `%%`
+-- since the whole string goes through string.format.
 local TEMPLATE = [=[
 do
     local _ri_type = type
@@ -129,21 +124,18 @@ function Step.apply(source, options)
         body = source
     end
 
-    -- Per-build PRNG. With an explicit seed it replays exactly (reproducible
-    -- builds); without one it draws fresh entropy so every build differs.
+    -- Per-build PRNG. An explicit seed replays exactly; otherwise it draws fresh entropy.
     local prng = Entropy.prng(options.seed)
 
     -- Salt for variable-name uniqueness (alphanumeric only, always valid).
     local salt = prng:identifier(8):gsub("[^%w]", "")
     if salt == "" then salt = "s" end
 
-    -- Nonce built from PRNG output only: contains no underscore, so the "_ri_"
-    -- prefix rename below can never touch the embedded literal, and it stays
-    -- deterministic for a given seed while remaining unique otherwise.
+    -- Nonce from PRNG output only, so it has no underscore for the "_ri_" rename to touch;
+    -- deterministic per seed, unique otherwise.
     local nonce = salt .. "." .. tostring(prng:next()) .. "." .. tostring(prng:next())
-    -- Tripwire values. The nonce is split into two concatenated string pieces
-    -- and the combined expected digest is a sum of two addends, so neither
-    -- constant exists as one editable literal in the output.
+    -- Tripwire values: nonce split into two concatenated pieces, expected digest a sum of
+    -- two addends, so neither constant is one editable literal in the output.
     local seed2 = (fold(salt .. "|ri-seed|") % 2147483646) + 1
     local expected = fold(nonce) + fold2(nonce, seed2)
     local cut = math.floor(#nonce / 2)
@@ -152,9 +144,8 @@ function Step.apply(source, options)
     local expected_piece_2 = expected % 1000003
     local expected_piece_1 = expected - expected_piece_2
 
-    -- Rename the guard's local variables first (gsub leaves the %q/%d format
-    -- directives untouched), then splice in the nonce pieces, fold seed and
-    -- expected addends so none are affected by the rename.
+    -- Rename locals first (gsub leaves the %q/%d directives alone), then splice in the
+    -- nonce pieces, seed, and expected addends so the rename can't touch them.
     local prefix = "_ri" .. salt .. "_"
     local guard = TEMPLATE:gsub("_ri_", prefix):format(
         nonce_piece_1, nonce_piece_2, seed2, expected_piece_1, expected_piece_2)

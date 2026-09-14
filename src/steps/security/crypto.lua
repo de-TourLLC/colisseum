@@ -17,10 +17,9 @@ Step.metadata = {
     description = "Encrypts the program as ChaCha20 Luau bytecode run by the embedded Fiu VM. No loadstring."
 }
 
--- crypto and vm are the two names for the same authenticated, encrypted bytecode
--- backend: compile to Luau bytecode, ChaCha20-encrypt it under a masked key, and
--- run it on the embedded Fiu VM, decrypting purely with bitwise ops (no
--- loadstring). Applying both stacks a second VM layer for extra depth.
+-- crypto and vm are two names for the same encrypted-bytecode backend: compile to Luau
+-- bytecode, ChaCha20-encrypt under a masked key, run on the embedded Fiu VM (no loadstring).
+-- Applying both stacks a second VM layer.
 function Step.apply(source, options)
     local Vm = require("src.steps.security.vm")
     return Vm.apply(source, options)

@@ -1,6 +1,5 @@
 -- Adapter for an external Luau compiler executable.
--- The process is invoked through the host Lua process API, so every argument
--- is validated and quoted before it reaches the platform command shell.
+-- Every argument is validated and quoted before it reaches the shell.
 local Validate = require("src.core.validate")
 
 local Compiler = {}
@@ -22,9 +21,8 @@ local function valid_text(value, name)
     return value
 end
 
--- Source is written to a temporary file and passed to the compiler by path, so
--- it never reaches the shell. It therefore may (and normally does) contain
--- newlines; only a null byte makes it invalid as a text source file.
+-- Source is written to a temp file and passed by path, so it never reaches the shell.
+-- Newlines are fine; only a null byte makes it invalid.
 local function valid_source(value)
     if type(value) ~= "string" or value == "" then
         return nil, error_message("source must be a non-empty string")
@@ -43,8 +41,7 @@ local function quote_argument(value)
     if is_windows then
         value = value:gsub("/", "\\")
         if not value:find("%s") then return value end
-        -- CommandLineToArgvW-compatible quoting. Shell metacharacters were
-        -- rejected above because cmd.exe still expands some of them in quotes.
+        -- CommandLineToArgvW-compatible quoting; shell metacharacters were rejected above.
         local quoted = { '"' }
         local slashes = 0
         for index = 1, #value do
@@ -78,9 +75,7 @@ local function executable_status(path)
     return true
 end
 
--- Temporary files carry a randomized component and live in the OS temp directory
--- (TEMP/TMP on Windows, /tmp elsewhere) rather than the process CWD with a
--- predictable name, which avoids TOCTOU/symlink races in shared working dirs.
+-- Temp files get a randomized name in the OS temp dir to avoid TOCTOU/symlink races.
 local function temporary_file(extension)
     local dir = os.getenv("TEMP") or os.getenv("TMP") or "/tmp"
     local nonce = tostring(os.time()) .. "_" .. tostring(os.clock()) .. "_" .. tostring(math.random(1, 1e9))
@@ -191,8 +186,7 @@ function Compiler.compile(source, executable, options)
 if not successful then
         local detail = diagnostic_text and diagnostic_text:gsub("%s+$", "") or ""
         if detail == "" then detail = "compiler exited with status " .. tostring(status) end
-        -- No command text / filesystem paths in the error: they leak the local
-        -- layout and the full temp path back to callers.
+        -- Keep paths and command text out of the error; they leak local layout to callers.
         return nil, error_message("compiler failed: " .. detail)
     end
     if not result then return nil, error_message("compiler produced no readable bytecode: " .. tostring(read_error)) end

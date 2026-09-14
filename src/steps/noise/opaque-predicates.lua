@@ -99,19 +99,15 @@ function Step.apply(source, options)
     local body = source:sub(#shebang + 1)
     local blocks, bytes = {}, 0
     for _ = 1, max_insertions do
-        -- Leading newline so the block can never fuse with the previous token
-        -- (e.g. `end`+`if` -> `endif`, or `return s`+`if` -> `return sif`): the
-        -- dead block is spliced at a proven statement boundary, but the boundary
-        -- check alone cannot guarantee a whitespace-free minified neighbor.
+        -- Leading newline so the block can't fuse with the previous token (e.g.
+        -- `end`+`if` becoming `endif`) after minification.
         local text = "\nif " .. opaque_false(prng) .. " then " .. dead_body(prng) .. " end\n"
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    -- Interleave the dead blocks at random top-level statement boundaries so the
-    -- guard region is not a single trivially strippable prefix. Safe.interleave
-    -- only ever splices at proven statement boundaries (outside every block and
-    -- bracket), so splicing cannot corrupt the program.
+    -- Interleave the dead blocks at random statement boundaries so they aren't one
+    -- strippable prefix. Safe.interleave only splices at real boundaries.
     local result
     if #blocks > 0 then
         result = shebang .. Safe.interleave(body, prng, blocks)

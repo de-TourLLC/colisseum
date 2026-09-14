@@ -1,10 +1,7 @@
 local Step = {}
 local build_counter = 0
 local Crypto = require("src.steps.security.crypto")
--- Guard comments are stripped before emission so the shipped output never carries
--- the guard's design commentary (in text presets `minify` runs before this step,
--- so without this the whole template -- a roadmap for a deobfuscator -- would ship
--- verbatim). Blanking keeps line boundaries, so the beautify detector is unaffected.
+-- Guard template comments get blanked before emission, keeping line boundaries.
 local StripComments = require("src.steps.strip-comments")
 
 Step.name = "anti-tamper"
@@ -40,13 +37,10 @@ local function make_guard(options, tag, token, digest)
     local detect_loaders = boolean_option(options, "detectLoaders", true)
     local detect_metatable = boolean_option(options, "detectMetatable", true)
     local detect_timing = boolean_option(options, "detectTiming", false)
-    -- Detect post-load hooks of core stdlib functions (string/table/math) by
-    -- identity divergence from the pristine baseline captured at chunk load.
+    -- Catch post-load hooks of string/table/math by identity divergence from load-time baseline.
     local detect_stdlib = boolean_option(options, "detectStdlib", true)
-    -- Deferred re-scan: exploits usually inject AFTER the game loads, so a single
-    -- startup scan misses them. recheckDelay = seconds to wait after load before
-    -- the second scan (0/false disables the deferred pass). recheckAfterLoad waits
-    -- for the game to finish loading first. Both are no-ops with no scheduler.
+    -- Deferred re-scan catches exploits that inject after load. recheckDelay is seconds
+    -- to wait (0/false disables); recheckAfterLoad waits for the game first. No-op without a scheduler.
     local recheck_delay
     if options.recheckDelay == false or options.recheckDelay == 0 then
         recheck_delay = 0
@@ -54,15 +48,13 @@ local function make_guard(options, tag, token, digest)
         recheck_delay = number_option(options, "recheckDelay", 3)
     end
     local recheck_after_load = boolean_option(options, "recheckAfterLoad", true)
-    -- Anti-beautify: emit two error() probes on ONE physical line and compare the
-    -- line numbers Lua reports (parsed from the error text, no debug). A beautifier
-    -- that splits them onto separate lines makes the numbers diverge.
+    -- Anti-beautify: two error() probes on one physical line; a beautifier that splits
+    -- them makes the reported line numbers diverge (parsed from error text, no debug).
     local detect_beautify = boolean_option(options, "detectBeautify", true)
     local mark_a = "b" .. tostring(tag) .. "za"
     local mark_b = "b" .. tostring(tag) .. "zb"
-    -- One physical line. `_at_pcall`/`_at_tostring`/`_at_flag` are in scope inside
-    -- _at_scan where this is spliced. The `%d` here is NOT a format specifier --
-    -- it lives inside a format ARGUMENT, so it is copied through verbatim.
+    -- One physical line, spliced into _at_scan where _at_pcall/_at_tostring/_at_flag exist.
+    -- The `%d` sits inside a format argument, not a specifier, so it passes through verbatim.
     local beautify_line = ""
     if detect_beautify then
         beautify_line =
@@ -74,8 +66,7 @@ local function make_guard(options, tag, token, digest)
             "if _at_l1 and _at_l2 and _at_l1 ~= _at_l2 then _at_flag(4, \"source-reformatted\") end"
     end
 
-    -- Split the tripwire constants so no single literal equals the nonce or the
-    -- digest (see the guard template).
+    -- Split tripwire constants so no single literal equals the nonce or the digest.
     local nonce_text = tostring(token)
     local cut = math.floor(#nonce_text / 2)
     local nonce_piece_1 = nonce_text:sub(1, cut)
@@ -529,20 +520,16 @@ function Step.apply(source, options)
         shebang = ""
     end
     build_counter = build_counter + 1
-    -- Salt for per-build variable-name randomisation. Derived from the source and
-    -- caller entropy but never embedded verbatim, so the guard leaks no source.
-    -- When an explicit seed is supplied the salt is seed+source only: builds stay
-    -- reproducible on demand while every distinct build still gets unique names.
+    -- Salt for per-build variable-name randomisation, derived from source and entropy
+    -- but never embedded verbatim. With an explicit seed it's seed+source, so seeded builds reproduce.
     local salt
     if options.seed ~= nil then
         salt = Crypto.digest(source .. tostring(options.seed))
     else
         salt = Crypto.digest(source .. tostring(options.seed or "") .. tostring(os.time()) .. tostring(os.clock()) .. tostring(build_counter))
     end
-    -- Short build nonce for the internal-integrity tripwire. It contains no source,
-    -- so the emitted guard no longer embeds (and leaks) a second copy of the whole
-    -- program the way earlier versions did. The global build_counter is only folded
-    -- in when no explicit seed is given, so a seeded build reproduces exactly.
+    -- Short build nonce for the internal-integrity tripwire; carries no source. The
+    -- build_counter is only folded in without an explicit seed, so a seeded build reproduces exactly.
     local nonce
     if options.seed ~= nil then
         nonce = tostring(salt)

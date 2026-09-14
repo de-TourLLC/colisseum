@@ -1,5 +1,4 @@
--- Read-only capability discovery for the production Luau backend.
--- This module deliberately never loadfile's or executes a backend/source file.
+-- Read-only capability discovery for the Luau backend. Never loads or runs backend files.
 local Manifest = {}
 
 Manifest.pinned = {
@@ -141,7 +140,6 @@ local function compiler_status(compiler)
     }
 end
 
--- Returns a fresh manifest and performs filesystem inspection only.
 function Manifest.inspect(options)
     options = options or {}
     if type(options) ~= "table" then

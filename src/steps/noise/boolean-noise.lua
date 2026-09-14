@@ -10,8 +10,7 @@ Step.metadata = {
     description = "Rewrites boolean literals to parenthesized, side-effect-free equivalent expressions."
 }
 
--- Every entry is a parenthesised, side-effect-free expression evaluating to the
--- named boolean. Index 1 is the deterministic default used when no seed is given.
+-- Parenthesised, side-effect-free expressions for each boolean. Index 1 is the no-seed default.
 local truthy = { "(true and true)", "(not false)", "(1==1)", "(true or false)", "(not not true)" }
 local falsy = { "(false or false)", "(not true)", "(1==0)", "(false and true)", "(not not false)" }
 
@@ -28,9 +27,7 @@ function Step.apply(source, options)
     if type(max_bytes) ~= "number" or max_bytes < 1 or max_bytes % 1 ~= 0 then error(Step.name .. ": max_bytes must be a positive integer") end
     if max_replacements > 100000 then error(Step.name .. ": max_replacements exceeds the hard limit") end
     if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
-    -- A seed varies which equivalent expression each literal becomes, so no two
-    -- builds share the same boolean-rewrite pattern; without one, the canonical
-    -- first form is used for deterministic output.
+    -- A seed varies which expression each literal becomes; without one, use the first form.
     local prng = options.seed ~= nil and Entropy.prng(options.seed) or nil
     local output, cursor, count, added = {}, 1, 0, 0
     for _, token in ipairs(Lexer.scan(source)) do

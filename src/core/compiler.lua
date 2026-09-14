@@ -1,5 +1,4 @@
--- Source compiler for the safe CLBC container.  This module only transforms
--- data; it never evaluates source text.
+-- Source compiler for the CLBC container. Only transforms data, never evaluates source text.
 local Lexer = require("src.core.lexer")
 local Parser = require("src.core.parser")
 local LuauTypes = require("src.core.luau-type-erase")

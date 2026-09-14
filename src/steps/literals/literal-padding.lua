@@ -10,8 +10,7 @@ function Step.apply(source)
     end
 
     local tokens = Lexer.scan(source)
-    -- Single forward pass into a buffer: O(n) instead of rebuilding the whole
-    -- source string on every wrapped literal.
+    -- Single forward pass into a buffer, not a full rebuild per literal.
     local out, cursor = {}, 1
     for index = 1, #tokens do
         local token = tokens[index]

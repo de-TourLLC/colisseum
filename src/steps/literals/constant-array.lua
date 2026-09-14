@@ -6,9 +6,7 @@ local Step = {}
 Step.name = "constant-array"
 Step.version = 1
 
--- Pools string literals into one shuffled, keyed-encoded array and replaces each
--- occurrence with an indexed lookup (order scrambled; shuffle baked into indices,
--- so no runtime un-shuffle cost).
+-- Pool string literals into one shuffled, keyed array; replace each with an indexed lookup.
 local MASK_MULT, MASK_INC, MASK_MOD = 1103515245, 12345, 2147483648
 
 local function encode_bytes(value, seed)
@@ -20,8 +18,7 @@ local function encode_bytes(value, seed)
     return "{" .. table.concat(bytes, ",") .. "}"
 end
 
--- Scan for quoted string literals with no escapes (safe to relocate verbatim),
--- skipping comments and long strings. Returns ordered occurrences.
+-- Scan for escape-free quoted literals, skipping comments and long strings.
 local function collect_strings(body)
     local occurrences = {}
     local index, length = 1, #body
@@ -106,8 +103,7 @@ function Step.apply(source, options)
         " _b[_j]=string.char((_t[_j]-math.floor(_x/65536)%256)%256) end " ..
         pool .. "[_k]=table.concat(_b) end\n"
 
-    -- Rebuild body, replacing each occurrence with a parenthesised indexed lookup
-    -- (parens keep it valid even in call-sugar position: f"x" -> f((P[i]))).
+    -- Rebuild body, replacing each occurrence with a parenthesised indexed lookup.
     local out, cursor = {}, 1
     for _, occ in ipairs(occurrences) do
         out[#out + 1] = body:sub(cursor, occ.start - 1)

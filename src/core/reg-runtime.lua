@@ -1,14 +1,12 @@
--- Register VM interpreter. Runs a proto tree (from reg-compiler) with reference-Lua
--- semantics; VM closures are real Lua functions. No loadstring. Lua/LuaJIT + Luau.
--- The program ships as an opaque byte blob decoded on demand; an optional `anchor`
--- arms an anti-hook sampler. Implementation details are intentionally terse.
+-- Register VM interpreter. Runs a proto tree from reg-compiler; VM closures are real
+-- Lua functions. Lua/LuaJIT + Luau, no loadstring. The program ships as an opaque
+-- byte blob decoded on demand, and an optional `anchor` arms the anti-hook sampler.
 
 local RegBytecode = require("src.core.reg-bytecode")
 
 local unpack_fn = table.unpack or unpack
--- Localized under distinct names (not `local x = x`) so the rename step can mangle
--- this interpreter when it is embedded, without the self-shadowing that would rename
--- the right-hand globals to nil.
+-- Named distinctly (not `local x = x`) so the rename step can mangle this
+-- interpreter when embedded without shadowing the right-hand globals to nil.
 local kk_select, kk_type, kk_error, kk_floor = select, type, error, math.floor
 local kk_pcall = pcall
 local kk_char, kk_concat = string.char, table.concat
@@ -37,10 +35,9 @@ do
 end
 local function pack(...) return { n = kk_select("#", ...), ... } end
 
--- Fibonacci (Zeckendorf) blob layer. When a build enables it, the opaque byte
--- stream is carried Fibonacci-coded and bit-packed; this rebuilds the exact fogged
--- bytes ONCE at VM start (the hot loop is untouched). Pure integer math, portable
--- across Lua 5.1 / LuaJIT / Luau. Inverse of fibonacci.encode_bytes + pack_bits.
+-- Fibonacci (Zeckendorf) blob layer. When enabled, the byte stream is carried
+-- Fibonacci-coded and bit-packed; this rebuilds the fogged bytes once at VM start.
+-- Inverse of fibonacci.encode_bytes + pack_bits.
 local kk_fib = { 1, 2 }
 for kk_i = 3, 15 do kk_fib[kk_i] = kk_fib[kk_i - 1] + kk_fib[kk_i - 2] end
 local kk_pow2 = { [0] = 1, 2, 4, 8, 16, 32, 64, 128 }
@@ -64,10 +61,9 @@ local function fib_unpack(packed, bitlen)
     return kk_concat(out)
 end
 
--- Inline RFC 8439 ChaCha20 keystream (mirror of src/core/chacha.lua). Used when a
--- build enables the real stream cipher: the fogged blob is XOR-masked with this
--- keystream, derived once at VM start (build/runtime agreement is verified by the
--- register VM differential + encrypt suites). Portable 32-bit integer math.
+-- Inline ChaCha20 keystream (mirror of src/core/chacha.lua). When the stream cipher
+-- is enabled, the fogged blob is XOR-masked with this keystream, derived once at VM
+-- start.
 local kk_pow = {}
 do local v = 1; for i = 0, 32 do kk_pow[i] = v; v = v * 2 end end
 local function cc_add(a, b) return (a + b) % 4294967296 end
@@ -210,12 +206,9 @@ function Runtime.run(program, options)
     local step_limit = options.steps or Runtime.LIMITS.steps
     local steps = 0
 
-    -- Cooperative auto-yield: on Roblox a heavy synchronous loop would hit
-    -- "exhausted allowed execution time". If a scheduler yield (task.wait / wait)
-    -- exists, the VM breathes every `yield_interval` instructions -- but only when
-    -- `coroutine.isyieldable()` says it is legal right now (never inside a
-    -- metamethod / C-call boundary). Off (0) by default and a no-op where no
-    -- scheduler exists, so plain Lua/LuaJIT and light scripts pay nothing.
+    -- Cooperative auto-yield so a heavy loop on Roblox doesn't hit the execution-time
+    -- limit: if a scheduler yield exists, breathe every `yield_interval` instructions,
+    -- but only when coroutine.isyieldable() allows it. Off (0) by default.
     local yield_interval = options.yield_interval or 0
     local yield_fn
     if yield_interval > 0 then
@@ -226,24 +219,18 @@ function Runtime.run(program, options)
     local isyieldable = coroutine.isyieldable
     local next_yield = yield_interval
 
-    -- Anti-hook sampler. Only armed when the bundle passed an anchor (the host
-    -- debug table captured at load): then the dispatch loop periodically
-    -- re-verifies that no hook is installed and that the debug API functions are
-    -- still the captured originals (so stubbing gethook to hide a live hook is
-    -- itself detected). Jittered stride so an attacker cannot time around a fixed
-    -- sampling interval.
+    -- Anti-hook sampler, armed only when the bundle passed an anchor. The dispatch
+    -- loop periodically re-checks that no hook is installed and that the debug API is
+    -- still the captured original, on a jittered stride.
     local anchor = options.anchor
     local sampler = kk_type(anchor) == "table" and kk_type(anchor.d) == "table"
         and kk_type(anchor.g) == "function"
     local sample_at = 1024
 
-    -- Startup tamper gate, bound INTO the interpreter itself (not a strippable
-    -- payload guard). program.m carries decisive executor/injector marker names
-    -- (assembled at build time; absent in unit builds). If a debug hook is already
-    -- installed, or any one marker is present in the host environment, it latches
-    -- the SAME silent honeypot drift the sampler uses: arithmetic results quietly
-    -- diverge, with no branded error to point an attacker at the check. Unwinding
-    -- and stripping the compiled-in anti-tamper payload still leaves this backstop.
+    -- Startup tamper gate bound into the interpreter itself. program.m carries
+    -- executor marker names; if a debug hook is present at start, or any marker
+    -- exists in the host env, it latches the same silent honeypot drift the sampler
+    -- uses (arithmetic quietly diverges, no branded error).
     local marks = program.m
     if marks then
         local tripped = false
@@ -305,10 +292,8 @@ function Runtime.run(program, options)
                     if ok and hook ~= nil then tripped = true end
                 end
                 if tripped then
-                    -- Divert opaquely instead of announcing detection: latch the
-                    -- honeypot drift and stop sampling (the poison is now self-
-                    -- sustaining, and re-checking would waste hot-loop time and
-                    -- re-expose the guard's timing). No branded error ships or fires.
+                    -- Latch the drift and stop sampling instead of announcing it; the
+                    -- poison is self-sustaining and re-checking would waste time.
                     hp = 1 + (steps % 3)
                     sampler = false
                 end
