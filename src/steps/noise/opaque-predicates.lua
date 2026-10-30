@@ -19,9 +19,9 @@ local function limit(options, name, default)
     return value
 end
 
--- Opaque-FALSE predicates: each is provably always false (dead guarded block), but
--- proving it needs an arithmetic/float/type invariant, and several families
--- reference a runtime value so they aren't constant-foldable from the bundle.
+--[[ opaque-false predicates: each is always false (dead guarded block), but proving it
+     needs an arithmetic/float/type invariant, and several reference a runtime value so
+     they don't constant-fold from the bundle. ]]
 local function opaque_false(prng)
     local kind = prng:range(1, 10)
     if kind == 1 then
@@ -65,9 +65,9 @@ local function value_expr(prng)
     return "{" .. tostring(prng:range(0, 999)) .. "}"
 end
 
--- The dead block guarded by an opaque-false predicate. Varying its body shape
--- (a local, a bare assignment inside a `do` scope, or a nested guard) means the
--- guarded region is not a recurring `then local <id> = <val> end` signature.
+--[[ the dead block behind an opaque-false predicate. varying its shape (a local, a
+     bare assignment in a `do`, a nested guard) keeps it from being a recurring
+     `then local <id> = <val> end` signature. ]]
 local function dead_body(prng)
     local kind = prng:range(1, 3)
     if kind == 1 then
@@ -92,22 +92,19 @@ function Step.apply(source, options)
     if max_insertions > 4096 then error(Step.name .. ": max_insertions exceeds the hard limit") end
     if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
 
-    -- Always seeded (deterministic without an explicit seed); the obfuscator
-    -- injects a per-build seed so each build differs.
+    -- always seeded (deterministic without one); the obfuscator injects a per-build seed
     local prng = Entropy.prng(options.seed or "opaque-predicates")
     local shebang = source:match("^(#![^\n]*\n)") or ""
     local body = source:sub(#shebang + 1)
     local blocks, bytes = {}, 0
     for _ = 1, max_insertions do
-        -- Leading newline so the block can't fuse with the previous token (e.g.
-        -- `end`+`if` becoming `endif`) after minification.
+        -- leading newline so the block can't fuse with the previous token (end+if -> endif) after minify
         local text = "\nif " .. opaque_false(prng) .. " then " .. dead_body(prng) .. " end\n"
         if bytes + #text > max_bytes then break end
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    -- Interleave the dead blocks at random statement boundaries so they aren't one
-    -- strippable prefix. Safe.interleave only splices at real boundaries.
+    -- interleave the dead blocks at random boundaries, not one strippable prefix
     local result
     if #blocks > 0 then
         result = shebang .. Safe.interleave(body, prng, blocks)

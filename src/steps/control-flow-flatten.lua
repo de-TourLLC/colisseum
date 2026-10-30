@@ -10,8 +10,7 @@ Step.metadata = {
     description = "Flattens top-level control flow into a shuffled state-machine dispatcher."
 }
 
--- Any construct this step is not certain it can flatten without changing meaning
--- makes it return the source unchanged. Correctness first: a no-op is always safe.
+-- anything it isn't sure it can flatten without changing meaning is left as-is (a no-op is always safe)
 
 local function local_names(statement)
     local names = {}
@@ -28,8 +27,7 @@ local function references(text, name)
     return text:find("%f[%w_]" .. name .. "%f[^%w_]") ~= nil
 end
 
--- Encode a state transition so the target isn't a plain literal a regex can
--- collect; all forms evaluate to exactly `value` behind trivial arithmetic.
+-- encode a state transition so the target isn't a plain literal; all forms equal `value`
 local function encode_transition(prng, value)
     local kind = prng:range(1, 3)
     if kind == 1 then return tostring(value) end
@@ -58,8 +56,7 @@ function Step.apply(source, options)
     local hoist, hoisted = {}, {}
 
     local function hoist_name(name, before_offset)
-        -- Reject shadowing (same name hoisted twice) and any earlier reference to
-        -- the name (a prior closure may capture the global of the same name).
+        -- reject shadowing (name hoisted twice) and any earlier reference to the name
         if hoisted[name] then return false end
         if references(body:sub(1, before_offset - 1), name) then return false end
         hoisted[name] = true
@@ -70,8 +67,7 @@ function Step.apply(source, options)
     for index, statement in ipairs(statements) do
         local text = body:sub(statement.start, statement.finish)
         local kind = statement.kind
-        -- Verify each extracted statement compiles on its own; if any fragment
-        -- does not, the boundaries are unsafe, so leave source as-is.
+        -- each extracted statement must compile on its own; if not, the boundaries are unsafe
         local valid = Validate.syntax(text)
         if not valid then return source end
         if kind == "return" then
@@ -118,8 +114,7 @@ function Step.apply(source, options)
     end
     local start_key = keys[1]
 
-    -- Shuffle the physical order of the branches; the state transitions still run
-    -- the statements in their original logical order.
+    -- shuffle the physical branch order; the state transitions keep the logical order
     local order = {}
     for index = 1, #states do order[index] = index end
     for index = #order, 2, -1 do

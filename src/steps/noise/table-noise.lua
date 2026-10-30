@@ -30,8 +30,7 @@ function Step.apply(source, options)
     local max_bytes = positive(options, "max_bytes", 2048)
     if entries > 4096 then error(Step.name .. ": max_entries exceeds the hard limit") end
     if max_bytes > 262144 then error(Step.name .. ": max_bytes exceeds the hard limit") end
-    -- A seed randomises the table name and its static contents per build so the
-    -- injected table carries no fixed signature; without one it is deterministic.
+    -- a seed randomizes the table name and contents per build (no fixed signature); deterministic without one
     local prng = options.seed ~= nil and Entropy.prng(options.seed) or nil
     local name = prng and prng:identifier(prng:range(6, 12)) or "_colisseum_table_noise"
     local fields = {}

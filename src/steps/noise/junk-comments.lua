@@ -7,8 +7,8 @@ Step.version = 1
 -- Block comments between tokens are just separators, so the result stays valid.
 Step.emits_valid = true
 
--- Sprinkle short block comments of random non-ASCII glyphs between tokens; ignored
--- by the parser but they break pattern-based deobfuscators. Never contain `]]` or a newline.
+-- sprinkle short block comments of random non-ASCII glyphs between tokens; ignored by
+-- the parser but they break pattern deobfuscators. never contain "]]" or a newline.
 
 -- Codepoint ranges that render as dense glyphs. All above 0x5D, so none is ']' or newline.
 local RANGES = {

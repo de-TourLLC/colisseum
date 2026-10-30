@@ -1,5 +1,5 @@
--- Replace bounded integer literals with indexed reads from a pool decoded once at
--- load from Fibonacci/Zeckendorf codewords. Pure integer math, no loadstring.
+--[[ replace bounded integer literals with indexed reads from a pool decoded once at
+     load from Fibonacci/Zeckendorf codewords. integer math, no loadstring. ]]
 
 local Lexer = require("src.core.lexer")
 local Validate = require("src.core.validate")
@@ -78,8 +78,7 @@ function Step.apply(source, options)
     end
     if replaced == 0 then return source end
 
-    -- Pool initializer: build the coding sequence once, then decode each codeword
-    -- into _K[i]. All local to a `do` block, so only _K escapes.
+    -- pool init: build the coding sequence once, decode each codeword into _K[i] (only _K escapes)
     local fib_name = prefix .. "f"
     local dec_name = prefix .. "d"
     local init = {}

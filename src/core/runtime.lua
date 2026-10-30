@@ -126,11 +126,9 @@ end
 function Runtime.run(program, options)
     Runtime.validate(program)
     local limit, instructions = get_limits(options), program.instructions
-    -- Cache the ceilings the hot loops compare against on every node.
+    -- ceilings the hot loops compare against on every node
     local step_limit, depth_limit, iteration_limit = limit.steps, limit.depth, limit.loop_iterations
-    -- Undefined identifiers resolve against the host globals (the standard
-    -- library: print, ipairs, string, table, math, ...). Override via
-    -- options.environment. The step/loop/depth limits still bound execution.
+    -- undefined identifiers resolve against host globals (override via options.environment)
     local globals = (options and options.environment) or _G
     local steps, depth, loop_iterations = 0, 0, 0
     --[[ anti-hook sampler (armed when the bundle passes an anchor); stride-jittered,
@@ -174,8 +172,7 @@ function Runtime.run(program, options)
     end
 
     eval = function(id, environment)
-        -- Inlined tick()+enter(): this runs on every evaluated node, so the two
-        -- function calls are unrolled and the ceilings read from locals.
+        -- inlined tick()+enter(): runs on every node, so the calls are unrolled
         steps=steps+1; if steps>step_limit then fail("step limit exceeded") end
         depth=depth+1; if depth>depth_limit then fail("evaluation depth limit exceeded") end
         local op, v = names[instructions[id].opcode], instructions[id].operands
@@ -189,9 +186,8 @@ function Runtime.run(program, options)
             if operator=="and" then if truthy(left) then result=eval(child(id,environment,3),environment) else result=left end
             elseif operator=="or" then if truthy(left) then result=left else result=eval(child(id,environment,3),environment) end
             else local right=eval(child(id,environment,3),environment)
-                -- Native operators so overloaded operators (Vector3/CFrame/UDim2/...)
-                -- dispatch through their metamethods; a non-numeric operand without a
-                -- metamethod still errors natively, preserving Lua semantics.
+                -- native operators, so overloaded types dispatch through their
+                -- metamethods; a non-numeric operand without one errors natively
                 if operator=="+" then result=left+right elseif operator=="-" then result=left-right elseif operator=="*" then result=left*right elseif operator=="/" then result=left/right elseif operator=="//" then result=math_floor(left/right) elseif operator=="%" then result=left%right elseif operator=="^" then result=left^right elseif operator==".." then result=left..right elseif operator=="==" then result=left==right elseif operator=="~=" then result=left~=right elseif operator=="<" then result=left<right elseif operator==">" then result=left>right elseif operator=="<=" then result=left<=right elseif operator==">=" then result=left>=right else fail("unsupported binary operator '"..operator.."'") end
             end
         elseif op=="call" then result=eval_call(id, environment)[1]
@@ -217,8 +213,7 @@ function Runtime.run(program, options)
             local parameters={}; for n=1,parameter_count do local p=v[3+n]; if type(p)~="string" then fail("invalid parameter") end; parameters[n]=p end
             local body_count=v[4+parameter_count]; if type(body_count)~="number" or body_count<0 or body_count~=#v-(4+parameter_count) then fail("invalid function body layout") end
             local body={}; for n=1,body_count do body[n]=reference(v[4+parameter_count+n],id,4+parameter_count+n) end
-            -- A VM closure is a real Lua function, so native code (pcall, sort,
-            -- metamethods) can call it directly.
+            -- a VM closure is a real Lua function, so native code (pcall, sort, ...) calls it directly
             local closure_env=environment
             result=function(...)
                 local nargs=select("#",...); local args={...}
@@ -240,15 +235,13 @@ function Runtime.run(program, options)
         depth=depth-1; return result
     end
 
-    -- Invoke a callee (VM closures are real functions too) with pre-evaluated
-    -- args, returning ALL of its values.
+    -- invoke a callee with pre-evaluated args, returning all its values
     local function invoke(callee, args, argn)
         if type(callee) ~= "function" then fail("attempt to call a " .. type(callee) .. " value") end
         return pack(callee(unpack_fn(args, 1, argn)))
     end
 
-    -- A call returning ALL of its values. The last argument expands its own
-    -- multiple values, matching Lua semantics.
+    -- a call returning all its values; the last argument expands its own, like Lua
     eval_call = function(id, environment)
         tick()
         local v = instructions[id].operands

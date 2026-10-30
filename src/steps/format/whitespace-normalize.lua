@@ -6,8 +6,7 @@ Step.version = 1
 
 local function normalize(value)
     if value == "" then return value end
-    -- A newline is required after a line comment; preserving one also keeps
-    -- statement locations broadly useful without changing protected tokens.
+    -- a newline is required after a line comment; keeping one also preserves locations
     if value:find("[\r\n]") then return "\n" end
     return " "
 end

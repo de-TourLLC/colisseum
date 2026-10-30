@@ -64,8 +64,8 @@ function RegBytecode.opcodes()
     return result
 end
 
--- Superoperator peephole: fuses the first of an adjacent pair, keeping the second as a
--- jump target. `enabled` gates pair kinds (MM/LL/GG), nil = all. Mutates the tree in place.
+--[[ superoperator peephole: fuses the first of an adjacent pair, leaving the second in
+     place as a possible jump target. `enabled` gates pair kinds, nil = all. in place. ]]
 local FUSE = {
     [by_name.MOVE] = {
         [by_name.MOVE] = { op = by_name.FUSEMM, k = "MM" },
@@ -107,8 +107,8 @@ function RegBytecode.rk_is_const(x) return x < 0 end
 function RegBytecode.rk_index(x) return -x end
 
 -- ---- serialization ----------------------------------------------------------
--- Compact binary encoding of the proto tree for embedding (no source, no plaintext bytecode).
--- Little-endian ints, signed operands biased by 2^31, numbers round-trip via %.17g.
+--[[ compact binary encoding of the proto tree for embedding (no source, no plaintext
+     bytecode). little-endian ints, signed operands biased by 2^31, numbers via %.17g. ]]
 
 local char, byte, format, concat = string.char, string.byte, string.format, table.concat
 
@@ -200,9 +200,9 @@ function RegBytecode.decode(data)
     return r_proto()
 end
 
--- Opaque in-memory encoding. encode_opaque flattens every proto's constants and
--- instructions into one fogged binary string plus a region index, decoded on demand
--- so a dumped frame is just a fogged blob. Returns (string, regions), regions[0] main.
+--[[ opaque in-memory encoding: encode_opaque flattens every proto's constants and
+     instructions into one fogged binary string plus a region index, decoded on demand
+     so a dumped frame is just a fogged blob. returns (string, regions), regions[0] main. ]]
 local function bi32(out, n)
     n = (n + 2147483648) % 4294967296
     out[#out + 1] = char(n % 256)

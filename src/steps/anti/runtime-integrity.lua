@@ -1,5 +1,6 @@
--- Prepends a startup guard that aborts on a tampered runtime (nonce mismatch, swapped
--- core functions, or an installed debug hook). Clean runs pass silently; every check is pcall-wrapped.
+--[[ prepends a startup guard that aborts on a tampered runtime (nonce mismatch, swapped
+     core functions, an installed debug hook). clean runs pass silently; every check is
+     pcall-wrapped. ]]
 
 local Entropy = require("src.core.entropy")
 -- Strip the guard's comments before emission (blanking keeps line numbers intact).
@@ -9,8 +10,7 @@ local Step = {}
 Step.name = "runtime-integrity"
 Step.version = 1
 
--- Build-time FNV-1a-style fold. Mirrors the hash emitted into the guard byte-for-byte
--- so the runtime recomputation matches. Returns an integer (< 2^31) so the sum adds exactly.
+-- build-time FNV-1a fold, mirroring the guard's hash byte-for-byte; integer < 2^31 so the sum is exact
 local function fold(value)
     local state = 2166136261 % 2147483647
     for index = 1, #value do
@@ -20,8 +20,7 @@ local function fold(value)
     return state
 end
 
--- Second independent fold (seeded multiply-accumulate), emitted as _ri_hash2. Different
--- recurrence and per-build seed, so recomputing the expected value needs both folds and the seed.
+-- second independent fold (seeded MAC), emitted as _ri_hash2; recomputing needs both folds and the seed
 local function fold2(value, seed)
     local state = seed % 2147483647
     for index = 1, #value do
@@ -131,11 +130,9 @@ function Step.apply(source, options)
     local salt = prng:identifier(8):gsub("[^%w]", "")
     if salt == "" then salt = "s" end
 
-    -- Nonce from PRNG output only, so it has no underscore for the "_ri_" rename to touch;
-    -- deterministic per seed, unique otherwise.
+    -- nonce from PRNG output only (no underscore for the _ri_ rename to touch); deterministic per seed
     local nonce = salt .. "." .. tostring(prng:next()) .. "." .. tostring(prng:next())
-    -- Tripwire values: nonce split into two concatenated pieces, expected digest a sum of
-    -- two addends, so neither constant is one editable literal in the output.
+    -- tripwire values: nonce in two pieces, expected digest a sum of two addends -- neither is one editable literal
     local seed2 = (fold(salt .. "|ri-seed|") % 2147483646) + 1
     local expected = fold(nonce) + fold2(nonce, seed2)
     local cut = math.floor(#nonce / 2)
@@ -144,8 +141,7 @@ function Step.apply(source, options)
     local expected_piece_2 = expected % 1000003
     local expected_piece_1 = expected - expected_piece_2
 
-    -- Rename locals first (gsub leaves the %q/%d directives alone), then splice in the
-    -- nonce pieces, seed, and expected addends so the rename can't touch them.
+    -- rename locals first (gsub leaves %q/%d alone), then splice in the nonce/seed/addends
     local prefix = "_ri" .. salt .. "_"
     local guard = TEMPLATE:gsub("_ri_", prefix):format(
         nonce_piece_1, nonce_piece_2, seed2, expected_piece_1, expected_piece_2)

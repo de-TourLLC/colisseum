@@ -1,5 +1,5 @@
--- Register VM compiler: Lua AST -> proto tree for reg-runtime. Single-pass codegen
--- (reg allocator, constant interning, jump patching, boxed upvalues). No loadstring.
+--[[ register VM compiler: Lua AST -> proto tree for reg-runtime. single-pass codegen
+     (reg alloc, constant interning, jump patching, boxed upvalues). no loadstring. ]]
 
 local Parser = require("src.core.parser")
 local LuauTypes = require("src.core.luau-type-erase")
@@ -9,8 +9,8 @@ local OP = RB.OP
 local RegCompiler = {}
 
 -- ---- capture analysis -------------------------------------------------------
--- A local/param is "captured" if a nested function references its name (over-
--- approximated; boxing a non-captured local is still correct, just slower).
+--[[ a local/param is "captured" if a nested function references its name. over-
+     approximated: boxing a non-captured local is still correct, just slower. ]]
 
 local function has_vararg(params)
     for _, p in ipairs(params) do if p == "..." then return true end end
@@ -34,8 +34,7 @@ local function walk(node, on_node)
     end
 end
 
--- Names bound by params + local declarations directly in a function body (not
--- descending into nested functions).
+-- names bound by params + locals directly in a function body (not nested functions)
 local function own_bindings(params, body)
     local names = {}
     for _, p in ipairs(params) do names[p] = true end
@@ -154,8 +153,7 @@ local function compile_function(params, body, is_vararg, parent)
         end
         return nil
     end
-    -- Resolve `name` as an upvalue of fs (recursively through parents). Returns the
-    -- upvalue index in fs.proto.upvals or nil.
+    -- resolve `name` as an upvalue (recursively through parents); its index or nil
     local function resolve_upval(state, name)
         if not state.parent then return nil end
         -- already an upvalue?
@@ -227,8 +225,7 @@ local function compile_function(params, body, is_vararg, parent)
         return nil
     end
 
-    -- Decode a string literal (source spelling) to its value; handles long strings
-    -- and all Lua escapes (\ddd, \xHH), matching reference Lua exactly.
+    -- decode a string literal to its value; long strings and all Lua escapes
     -- Encode a Unicode code point as UTF-8 bytes (for Luau's `\u{XXXX}` escape).
     local function utf8_encode(cp)
         if cp < 0x80 then return string.char(cp)
@@ -274,8 +271,7 @@ local function compile_function(params, body, is_vararg, parent)
         return table.concat(out)
     end
 
-    -- expr_rk: returns an RK operand (constant index encoded, or a register).
-    -- may allocate a temp register (caller manages freereg).
+    -- expr_rk: an RK operand (encoded constant index, or a register); may alloc a temp
     expr_rk = function(node)
         if node.kind == "number" then return RB.rk_const(kidx(tonumber(node.value))) end
         if node.kind == "string" then return RB.rk_const(kidx(decode_string_literal(node.value))) end
@@ -418,9 +414,8 @@ local function compile_function(params, body, is_vararg, parent)
         if fs.freereg <= reg then fs.freereg = reg + 1 end
     end
 
-    -- compile a call node; places the callee at some base register and emits CALL.
-    -- want = number of results wanted + 1 (Lua CALL C convention); want==0 -> all.
-    -- returns the base register where results begin.
+    --[[ compile a call: callee at a base register, then CALL. want = results+1 (Lua's
+         C convention), 0 = all. returns the base register where results begin. ]]
     compile_call = function(node, want)
         local base = fs.freereg
         reserve(1)
@@ -445,9 +440,9 @@ local function compile_function(params, body, is_vararg, parent)
         end
     end
 
-    -- Evaluate an argument list into consecutive registers starting at `start`.
-    -- The final call/vararg argument expands to all its values (top-open).
-    -- Returns the fixed count, or -1 when the last arg is multi-value (top-open).
+    --[[ evaluate an arg list into consecutive registers from `start`; the last
+         call/vararg arg expands to all its values. returns the fixed count, or -1
+         when the last arg is multi-value. ]]
     compile_args = function(args, start)
         fs.freereg = start
         local n = #args
@@ -468,8 +463,8 @@ local function compile_function(params, body, is_vararg, parent)
         end
     end
 
-    -- expr_multi: place ALL values of a multi-value expr (call/vararg) starting at
-    -- `base`. want==-1 => all (sets top). want>=0 => exactly `want` values.
+    --[[ expr_multi: place all values of a call/vararg from `base`. want==-1 = all
+         (sets top), want>=0 = exactly that many. ]]
     expr_multi = function(node, base, want)
         if node.kind == "call" then
             local savedfree = fs.freereg

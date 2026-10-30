@@ -35,10 +35,9 @@ function Step.apply(source, options)
     if type(source) ~= "string" then error("rename: source must be a string") end
     options = options or {}
     local tokens = Lexer.scan(source)
-    -- Collect every identifier already present in the source so generated names never
-    -- collide with an existing name. Without this, re-renaming an already-obfuscated
-    -- source could mint a name equal to one still in use (e.g. a pooled-constant table),
-    -- aliasing two distinct variables and corrupting the program for some seeds.
+    --[[ collect every identifier already in the source so generated names never collide
+         with one. without this, re-renaming an already-obfuscated source could mint a
+         name still in use and alias two variables, corrupting the program for some seeds. ]]
     local existing = {}
     for _, token in ipairs(tokens) do
         if token.kind == "identifier" then existing[token.value] = true end
@@ -60,8 +59,7 @@ function Step.apply(source, options)
     -- repeat...until keeps its scope open through the condition (which sees the body's locals), so defer the pop until the condition ends.
     local repeat_condition = false
     local repeat_depth = 0
-    -- `local x = <init>`: names aren't in scope in their own initializer, so
-    -- `local print = print` must resolve the RHS to the outer/global binding.
+    -- `local x = <init>`: names aren't in scope in their own init, so `local print = print` hits the outer binding
     local in_local_rhs = false
     local is_local_decl = false
     local local_pending = {}
@@ -109,8 +107,7 @@ function Step.apply(source, options)
         local value = token.value
         local before = previous(index)
         local after = next_token(index)
-        -- Inside a repeat condition: once the expression ends, pop the repeat scope
-        -- so the condition sees the body's locals and following code doesn't.
+        -- in a repeat condition: once the expr ends, pop the scope (the condition saw the body's locals)
         if repeat_condition then
             if value == "(" or value == "[" or value == "{" then
                 repeat_depth = repeat_depth + 1
@@ -154,15 +151,13 @@ function Step.apply(source, options)
                 function_header = true
             elseif declaring or for_declaration then
                 if not field then
-                    -- Only newly-introduced names get the self-reference guard; a
-                    -- re-declared/shadowed name keeps resolving to the prior binding.
+                    -- only new names get the self-reference guard; a shadowed name keeps the prior binding
                     local newly = is_local_decl and current.bindings[value] == nil
                     local binding = declaration(current, value, generator, declarations)
                     declarations[token.start] = binding
                     if newly then local_pending[value] = true end
                     declaring = after and after.value == ","
-                    -- LHS of a `local ... = ...` just ended and an initializer follows:
-                    -- enter RHS mode so self-references resolve to the outer scope.
+                    -- LHS of `local ... = ...` ended, init follows: enter RHS mode so self-refs hit the outer scope
                     if is_local_decl and not declaring and after and after.value == "=" then
                         in_local_rhs = true
                     end
@@ -198,8 +193,7 @@ function Step.apply(source, options)
             type_depth = 0
             function_header = false
         elseif parameters and param_type then
-            -- Inside a parameter's type annotation: track nesting of <>, {}, ()
-            -- so we know when the type (and possibly the parameter list) ends.
+            -- in a parameter type annotation: track <>, {}, () nesting to know when it ends
             if value == "(" or value == "{" or value == "<" then
                 type_depth = type_depth + 1
             elseif value == "}" or value == ">" then
@@ -235,8 +229,7 @@ function Step.apply(source, options)
         elseif token.kind == "symbol" and value == "}" then braces = math.max(0, braces - 1) end
     end
 
-    -- Single forward pass into a buffer: O(n) instead of rebuilding the whole
-    -- source string on every renamed identifier.
+    -- single forward pass into a buffer: O(n), not a rebuild per renamed identifier
     local out, cursor = {}, 1
     for index = 1, #tokens do
         local token = tokens[index]

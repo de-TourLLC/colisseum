@@ -5,8 +5,7 @@ local Step = {}
 Step.name = "numbers"
 Step.version = 2
 
--- Rewrite an integer literal into an equivalent arithmetic expression so the value
--- never appears literally. Pure integer arithmetic keeps the result exact.
+-- rewrite an integer literal into an equivalent arithmetic expression (exact, integer-only)
 local RANGE = 1048576 -- 2^20, within exact-double range
 local SAFE = 2 ^ 52
 

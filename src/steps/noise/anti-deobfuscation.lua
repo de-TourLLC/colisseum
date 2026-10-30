@@ -59,8 +59,7 @@ local function top_level_boundaries(source, tokens, first_offset)
     return boundaries
 end
 
--- Each tripwire is dead (`if false then ... end`); its name, keys, and values come
--- from the per-build PRNG so no fixed decoy signature survives across builds.
+-- each tripwire is dead (`if false then ... end`); name/keys/values from the per-build PRNG, no fixed signature
 local function tripwire(prng)
     local name = prng:identifier(prng:range(6, 12))
     local key = prng:identifier(prng:range(4, 8)):gsub("^_", "")

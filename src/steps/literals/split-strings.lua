@@ -8,8 +8,7 @@ Step.version = 1
 
 -- Split each plain quoted string literal into concatenated pieces so it never appears verbatim.
 
--- Scan for escape-free quoted literals safe to split, recording the quote char.
--- Mirrors constant-array's collect_strings.
+-- scan for escape-free quoted literals safe to split (mirrors constant-array's collect_strings)
 local function collect_strings(body)
     local occurrences = {}
     local index, length = 1, #body

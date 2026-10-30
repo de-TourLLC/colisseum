@@ -28,8 +28,7 @@ local function check_source(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
 
--- Side-effect-free right-hand sides: pure literals or arithmetic on the function's
--- own prior locals, so a body looks plausible but can't touch a global or fail.
+-- side-effect-free RHS: literals or arithmetic on the function's own locals -- plausible but inert
 local function value_expr(prng, priors)
     local kind = prng:range(1, 5)
     if kind == 1 then

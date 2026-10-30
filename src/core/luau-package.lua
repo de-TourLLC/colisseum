@@ -20,8 +20,7 @@ local function digest(value, seed)
     return state
 end
 
--- Two 31-bit folds joined into a 62-bit entropy string, so distinct sources stay separated.
--- Integer-only.
+-- two 31-bit folds joined into a 62-bit entropy string; integer-only
 local function wide_digest(value, seed)
     local a = digest(value, (seed or 2166136261))
     local b = digest(value, (seed or 1299721))
@@ -29,8 +28,7 @@ local function wide_digest(value, seed)
 end
 
 local function random_key(data, seed)
-    -- Seed from a 62-bit fold of build entropy so builds get separated key streams;
-    -- an explicit seed reproduces the same key.
+    -- seed from a 62-bit fold of build entropy; an explicit seed reproduces the key
     local state = digest(wide_digest(data, digest(tostring(seed))))
     local key = {}
     for index = 1, 32 do
@@ -119,8 +117,8 @@ local function marker_prefix(seed)
     return prefix
 end
 
--- Rename this module's locals to the per-build prefix. `underscores` is "_" for the
--- seal, "__" for the Fiu wrapper. _G is preserved, and this runs before Fiu is spliced in.
+--[[ rename this module's locals to the per-build prefix. `underscores` is "_" for the
+     seal, "__" for the Fiu wrapper. _G is kept, and this runs before Fiu is spliced in. ]]
 local function mangle(code, underscores, prefix)
     code = code:gsub("_G", "\1")
     code = code:gsub("%f[%w_]" .. underscores .. "(%a[%w_]*)", prefix .. "%1")

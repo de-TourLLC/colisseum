@@ -6,8 +6,7 @@ Step.version = 2
 -- Every rewrite turns `a.b` into `a["<b>"]`, equivalent field access, so the result is valid.
 Step.emits_valid = true
 
--- Rewrite dotted access `a.b` into bracket form `a["\098"]` (decimal-escaped key)
--- so field names can't be grepped. Stdlib/host singletons stay in dot form.
+-- rewrite `a.b` into `a["\098"]` (decimal-escaped key) so field names can't be grepped
 local protected_bases = {
     string = true, table = true, math = true, coroutine = true, debug = true,
     os = true, io = true, utf8 = true, bit32 = true, buffer = true, task = true,
@@ -47,8 +46,7 @@ function Step.apply(source, options)
         elseif token.kind == "symbol" and token.value == "." and not in_def_header then
             local name = sig[i + 1]
             local base = sig[i - 1]
-            -- Rewrite only when the base is a plain, unprotected identifier.
-            -- A base like `)`/`]`/`}` is a user value and always safe.
+            -- rewrite only when the base is a plain, unprotected identifier
             local base_ok = base == nil or base.kind ~= "identifier" or not protected_bases[base.value]
             if name ~= nil and name.kind == "identifier" and base_ok then
                 points[#points + 1] = { dot = token, name = name }

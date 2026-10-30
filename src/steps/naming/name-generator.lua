@@ -5,10 +5,9 @@ local function mix(value)
 end
 
 -- Confusable identifiers: a branded prefix plus chars from a tiny lookalike alphabet. Defaults to coli_ + 6-8 of {j,L}, all configurable.
--- `reserved` is an optional set (name -> true) of identifiers already present in the
--- source: pre-marking them as used guarantees a generated name never collides with an
--- existing identifier (e.g. a global, an injected helper, or a binding a re-rename pass
--- leaves alone), which would otherwise silently alias two distinct variables.
+--[[ `reserved` is an optional set of identifiers already in the source; marking them
+     used keeps a generated name from colliding with an existing one (a global, an
+     injected helper, a binding a re-rename pass left alone) and aliasing two variables. ]]
 function Generator.new(seed, config, reserved)
     config = config or {}
     local prefix = config.prefix or "coli_"
@@ -32,8 +31,7 @@ function Generator.new(seed, config, reserved)
         local parts = {}
         for index = 1, length do
             state = mix(state)
-            -- Use high-order bits; an LCG's low bits are strongly biased (which
-            -- with a 2-char alphabet produced near-constant names).
+            -- high-order bits: an LCG's low bits are biased (near-constant names with a 2-char alphabet)
             local position = math.floor(state / 65536) % nchars + 1
             parts[index] = charset:sub(position, position)
         end
@@ -42,8 +40,7 @@ function Generator.new(seed, config, reserved)
 
     function generator:next()
         local value
-        -- Bounded random attempts; the alphabet is small, so an unbounded retry
-        -- loop would hang once the reachable names of a given length are taken.
+        -- bounded attempts: the alphabet is small, so an unbounded retry could hang
         for _ = 1, 8 do
             state = mix(state)
             value = build(min_len + math.floor(state / 256) % span)

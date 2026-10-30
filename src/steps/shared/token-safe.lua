@@ -49,13 +49,11 @@ function Safe.same_line(value)
     return not value:find("[\r\n]")
 end
 
--- Top-level statement boundaries in `body`: the start, and each position after a
--- `;` or `end`. `until` is not a boundary but still counts toward depth.
+-- top-level statement boundaries: the start and each spot after `;` or `end` (`until` only counts for depth)
 local function statement_boundaries(body)
     local tokens = Lexer.scan(body)
     local points = { 1 }
-    -- One nesting counter for both block keywords and brackets; a boundary only
-    -- counts at depth 0.
+    -- one nesting counter for block keywords and brackets; a boundary counts only at depth 0
     local depth = 0
     for index, token in ipairs(tokens) do
         local prev = tokens[index - 1]

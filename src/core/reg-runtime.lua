@@ -1,19 +1,18 @@
--- Register VM interpreter. Runs a proto tree from reg-compiler; VM closures are real
--- Lua functions. Lua/LuaJIT + Luau, no loadstring. The program ships as an opaque
--- byte blob decoded on demand, and an optional `anchor` arms the anti-hook sampler.
+--[[ register VM interpreter: runs a proto tree from reg-compiler; VM closures are real
+     Lua functions. no loadstring. the program ships as an opaque byte blob decoded on
+     demand, and an optional `anchor` arms the anti-hook sampler. ]]
 
 local RegBytecode = require("src.core.reg-bytecode")
 
 local unpack_fn = table.unpack or unpack
--- Named distinctly (not `local x = x`) so the rename step can mangle this
--- interpreter when embedded without shadowing the right-hand globals to nil.
+--[[ named distinctly (not `local x = x`) so the rename step can mangle the embedded
+     interpreter without shadowing the right-hand globals to nil. ]]
 local kk_select, kk_type, kk_error, kk_floor = select, type, error, math.floor
 local kk_pcall = pcall
 local kk_char, kk_concat = string.char, table.concat
 local kk_tonumber = tonumber
--- Portable byte-wise XOR (bit32 / bit / arithmetic fallback) since `~` is not a
--- Lua 5.1 operator. Required on the hot path: every instruction/constant byte is
--- un-foged on demand in the dispatch loop.
+--[[ portable byte-wise XOR (bit32 / bit / arithmetic fallback), since `~` isn't a 5.1
+     operator. on the hot path: every instruction/constant byte is un-fogged on demand. ]]
 local kk_xor
 do
     local b32 = bit32 or rawget(_G, "bit") or rawget(_G, "bit32")
@@ -35,9 +34,8 @@ do
 end
 local function pack(...) return { n = kk_select("#", ...), ... } end
 
--- Fibonacci (Zeckendorf) blob layer. When enabled, the byte stream is carried
--- Fibonacci-coded and bit-packed; this rebuilds the fogged bytes once at VM start.
--- Inverse of fibonacci.encode_bytes + pack_bits.
+--[[ Fibonacci blob layer: when enabled the stream is Fibonacci-coded and bit-packed;
+     this rebuilds the fogged bytes once at VM start. inverse of encode_bytes+pack_bits. ]]
 local kk_fib = { 1, 2 }
 for kk_i = 3, 15 do kk_fib[kk_i] = kk_fib[kk_i - 1] + kk_fib[kk_i - 2] end
 local kk_pow2 = { [0] = 1, 2, 4, 8, 16, 32, 64, 128 }
@@ -61,9 +59,8 @@ local function fib_unpack(packed, bitlen)
     return kk_concat(out)
 end
 
--- Inline ChaCha20 keystream (mirror of src/core/chacha.lua). When the stream cipher
--- is enabled, the fogged blob is XOR-masked with this keystream, derived once at VM
--- start.
+--[[ inline ChaCha20 keystream (mirror of chacha.lua). when the cipher is on, the
+     fogged blob is XOR-masked with this, derived once at VM start. ]]
 local kk_pow = {}
 do local v = 1; for i = 0, 32 do kk_pow[i] = v; v = v * 2 end end
 local function cc_add(a, b) return (a + b) % 4294967296 end
@@ -141,23 +138,19 @@ function Runtime.run(program, options)
     local globals = options.environment or _G
 
     local S = program.S
-    -- Optional Fibonacci blob layer: program.fib is the exact bit length of the
-    -- packed codeword stream. Rebuild the fogged byte stream before any offset math.
+    -- fib layer: program.fib is the packed bit length; rebuild the bytes before offset math
     if program.fib then S = fib_unpack(S, program.fib) end
     local regs = program.r
     local fog = program.f or { 0 }
     local nfog = #fog
-    -- Optional per-build opcode normalization (raw code -> canonical). Absent in
-    -- the dev path, where the raw code is already canonical.
+    -- per-build opcode normalization (raw -> canonical); absent in the dev path
     local onorm = program.o
 
-    -- Honeypot drift: 0 on a clean run (results unaffected); set nonzero on tamper
-    -- detection, after which numeric arithmetic results are offset by `hp`.
+    -- honeypot drift: 0 on a clean run; set nonzero on tamper, offsetting numeric results by hp
     local hp = 0
 
-    -- Keystream mask, derived once at VM start (portable all-integer math; matches
-    -- reg-bytecode.encode_opaque byte-for-byte). program.enc selects the real
-    -- ChaCha20 stream cipher; otherwise the legacy per-position hash keystream.
+    --[[ keystream mask, derived once at VM start (all-integer, matches encode_opaque
+         byte-for-byte). program.enc = real ChaCha20; else the legacy hash keystream. ]]
     local mask = {}
     local slen = #S
     if program.enc then
@@ -174,8 +167,7 @@ function Runtime.run(program, options)
         end
     end
 
-    -- Raw fogged-byte reads. `S` is the build-fogged stream; every byte is
-    -- un-fogged on demand, so the interpreter never holds decoded state ready.
+    -- raw fogged-byte reads: every byte un-fogged on demand, no decoded state kept
     local function bget(i)
         return kk_xor(S:byte(i), mask[i])
     end
@@ -228,9 +220,9 @@ function Runtime.run(program, options)
     local step_limit = options.steps or Runtime.LIMITS.steps
     local steps = 0
 
-    -- Cooperative auto-yield so a heavy loop on Roblox doesn't hit the execution-time
-    -- limit: if a scheduler yield exists, breathe every `yield_interval` instructions,
-    -- but only when coroutine.isyieldable() allows it. Off (0) by default.
+    --[[ cooperative auto-yield so a heavy loop doesn't trip Roblox's execution-time
+         limit: breathe every `yield_interval` instructions when a scheduler yield
+         exists and coroutine.isyieldable() allows. off (0) by default. ]]
     local yield_interval = options.yield_interval or 0
     local yield_fn
     if yield_interval > 0 then
@@ -241,18 +233,17 @@ function Runtime.run(program, options)
     local isyieldable = coroutine.isyieldable
     local next_yield = yield_interval
 
-    -- Anti-hook sampler, armed only when the bundle passed an anchor. The dispatch
-    -- loop periodically re-checks that no hook is installed and that the debug API is
-    -- still the captured original, on a jittered stride.
+    --[[ anti-hook sampler, armed only when the bundle passed an anchor. the dispatch
+         loop periodically re-checks, on a jittered stride, that no hook is installed
+         and the debug API is still the captured original. ]]
     local anchor = options.anchor
     local sampler = kk_type(anchor) == "table" and kk_type(anchor.d) == "table"
         and kk_type(anchor.g) == "function"
     local sample_at = 1024
 
-    -- Startup tamper gate bound into the interpreter itself. program.m carries
-    -- executor marker names; if a debug hook is present at start, or any marker
-    -- exists in the host env, it latches the same silent honeypot drift the sampler
-    -- uses (arithmetic quietly diverges, no branded error).
+    --[[ startup tamper gate bound into the interpreter. program.m carries executor
+         marker names; a debug hook at start, or any marker in the host env, latches the
+         same silent drift the sampler uses (arithmetic diverges, no branded error). ]]
     local marks = program.m
     if marks then
         local tripped = false

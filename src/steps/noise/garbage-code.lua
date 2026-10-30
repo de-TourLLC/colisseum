@@ -27,8 +27,7 @@ local function check_source(source)
     if not valid then error(Step.name .. ": source is invalid at " .. position .. ": " .. message) end
 end
 
--- Unreachable wrappers with varied always-false guards so they aren't a grep-able
--- `if false then`. Bodies are harmless local assignments regardless.
+-- unreachable wrappers with varied always-false guards (not a grep-able `if false then`)
 local guards = {
     function(body) return "if false then " .. body .. " end" end,
     function(body) return "while false do " .. body .. " end" end,
@@ -92,8 +91,7 @@ function Step.apply(source, options)
         blocks[#blocks + 1] = text
         bytes = bytes + #text
     end
-    -- Scatter dead blocks across random statement boundaries, not one strippable
-    -- prefix. Fall back to a prefix splice if interleaving invalidates.
+    -- scatter dead blocks across random boundaries, not one strippable prefix (fall back if it invalidates)
     local result = shebang .. Safe.interleave(body, prng, blocks)
     local valid, message, position = Validate.syntax(result)
     if not valid then

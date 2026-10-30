@@ -18,8 +18,9 @@ end
 local this = debug.getinfo(1, "S").source:sub(2)
 local core_dir = (this:match("^(.*[/\\])") or "./") .. "../../core/"
 
--- Package source into a self-contained chunk: embeds the native VM, carries the program
--- as ChaCha20-encrypted bytecode, decrypts with bitwise ops (no loadstring), runs it! (idk why i changed it form a . to an ! lol)
+--[[ package source into a self-contained chunk: embeds the native VM, carries the
+     program as ChaCha20-encrypted bytecode, decrypts with bitwise ops (no loadstring),
+     runs it! (idk why i changed it form a . to an ! lol) ]]
 function Step.apply(source, options)
     if type(source) ~= "string" then error("native-vm: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("native-vm: options must be a table") end
@@ -39,8 +40,7 @@ function Step.apply(source, options)
     local prefix = brand_base
     for _ = 1, 6 do prefix = prefix .. string.char(97 + prng:range(0, 25)) end
 
-    -- Per-build opcode permutation with numeric enum dispatch: each build numbers opcodes
-    -- differently and the interpreter dispatches on numbers, not names.
+    -- per-build opcode permutation: each build numbers opcodes differently, and dispatch is on numbers
     local program = Bytecode.decode(Compiler.compile(source))
     local by_code, opcode_count = {}, 0
     for name, code in pairs(Bytecode.opcodes()) do
@@ -61,8 +61,7 @@ function Step.apply(source, options)
         opnum[by_code[code]] = perm[code]
     end
 
-    -- Rewrite opcode dispatch from string compares (op=="chunk") to numeric enum locals
-    -- (op==KAT_CHUNK); type guards left alone.
+    -- rewrite dispatch from string compares (op=="chunk") to enum locals (op==KAT_CHUNK)
     local function katify(src)
         src = src:gsub("names%[instructions%[id%]%.opcode%]", "instructions[id].opcode")
         src = src:gsub("names%[instructions%[cid%]%.opcode%]", "instructions[cid].opcode")
@@ -78,8 +77,7 @@ function Step.apply(source, options)
         return src
     end
 
-    -- KAT enum constants (per-build numbers) as flat locals at the top of the VM IIFE.
-    -- No nested function uses more than a handful, so the LuaJIT 60-upvalue cap is fine.
+    -- enum constants as flat locals atop the VM IIFE (well under LuaJIT's 60-upvalue cap)
     local kat_defs = {}
     for code = 1, opcode_count do
         kat_defs[#kat_defs + 1] = "local KAT_" .. by_code[code]:upper() .. "=" .. perm[code]
