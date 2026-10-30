@@ -1,6 +1,6 @@
--- Fibonacci (Zeckendorf) coding of positive integers, plus a self-delimiting byte codec.
--- A terminal '1' after the usage bits puts the first "11" on the codeword boundary.
--- All integer math, so build-time encoding decodes byte-for-byte at runtime.
+--[[ Fibonacci (Zeckendorf) coding of positive integers, plus a self-delimiting byte
+     codec. a terminal '1' after the usage bits puts the first "11" on the codeword
+     boundary. all integer math, so a build-time encode decodes byte-for-byte at runtime. ]]
 
 local Fibonacci = {}
 

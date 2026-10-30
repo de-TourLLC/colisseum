@@ -1,25 +1,21 @@
--- Bounded interpreter for CLBC.  It executes the AST-shaped, post-order
--- format only; it never turns data back into Lua source.
+--[[ bounded interpreter for CLBC: runs the AST-shaped post-order format only,
+     never turning data back into Lua source. ]]
 local Bytecode = require("src.core.bytecode")
 
 local unpack_fn = table.unpack or unpack
--- Hoist the hot library functions into locals: in a tree-walking interpreter these
--- are touched on nearly every node, and a local read is far cheaper than a global
--- table lookup on both Lua/LuaJIT and Luau.
+-- hoist hot library functions into locals -- touched on nearly every node, and a
+-- local read beats a global table lookup
 local type, tonumber, select, error, setmetatable = type, tonumber, select, error, setmetatable
 local math_floor, math_huge = math.floor, math.huge
 local string_char, table_concat = string.char, table.concat
--- Sentinel stored for a declared local whose value is nil, so one table per scope
--- (values) can replace the values+declared pair: a key present but == NIL means
--- "declared, holds nil"; a key absent (nil) means "not declared here".
+--[[ sentinel for a declared local holding nil, so one table per scope suffices: key
+     present and == NIL means "declared, nil"; key absent means "not declared here". ]]
 local NIL = {}
--- Pack return values with an exact count so nil holes in the middle survive
--- (plain { f() } + # truncates at the first nil).
+-- pack returns with an exact count so nil holes survive ({ f() }+# truncates at the first nil)
 local function pack(...) return { n = select("#", ...), ... } end
 
 local Runtime = {}
--- Generous ceilings so obfuscated programs run to completion. They still bound
--- runaway execution, and callers (e.g. the analysis sandbox) may pass lower ones.
+-- generous ceilings; still bound runaway execution, and callers may pass lower ones
 Runtime.LIMITS = { steps = 2000000000, depth = 100000, loop_iterations = 2000000000 }
 
 local names = {}
@@ -56,8 +52,7 @@ local function finite(value, context)
     return value
 end
 
--- CLBC retains source spelling for strings.  Decode the non-executable Lua
--- string syntax here instead of using load/loadstring.
+-- CLBC keeps the source spelling of strings; decode it here, no load/loadstring
 local function decode_string(source, id)
     if source:sub(1, 1) == "[" then
         local close = source:match("^%[(=*)%[")
@@ -138,16 +133,16 @@ function Runtime.run(program, options)
     -- options.environment. The step/loop/depth limits still bound execution.
     local globals = (options and options.environment) or _G
     local steps, depth, loop_iterations = 0, 0, 0
-    -- Anti-hook sampler (armed when the bundle passes an anchor). Stride-jittered;
-    -- aborts if a hook is installed post-boot or the debug API is swapped.
+    --[[ anti-hook sampler (armed when the bundle passes an anchor); stride-jittered,
+         aborts if a hook appears post-boot or the debug API is swapped. ]]
     local anchor = (options and options.anchor) or nil
     local sampler = anchor ~= nil and type(anchor) == "table" and type(anchor.d) == "table"
         and type(anchor.d.gethook) == "function"
     local sample_at = 1024
     local pcall_native = pcall
     local returned, return_values
-    -- `broke` signals a `break`: it unwinds the innermost enclosing loop only and
-    -- is cleared by that loop once it exits (unlike `returned`, which propagates).
+    --[[ `broke` signals a break: unwinds the innermost loop only, cleared by that loop
+         on exit (unlike `returned`, which propagates). ]]
     local broke = false
     local eval, execute, eval_call, eval_multi
 
@@ -194,7 +189,10 @@ function Runtime.run(program, options)
             if operator=="and" then if truthy(left) then result=eval(child(id,environment,3),environment) else result=left end
             elseif operator=="or" then if truthy(left) then result=left else result=eval(child(id,environment,3),environment) end
             else local right=eval(child(id,environment,3),environment)
-                if operator=="+" then result=number(left,"addition")+number(right,"addition") elseif operator=="-" then result=number(left,"subtraction")-number(right,"subtraction") elseif operator=="*" then result=number(left,"multiplication")*number(right,"multiplication") elseif operator=="/" then result=number(left,"division")/number(right,"division") elseif operator=="//" then result=math_floor(number(left,"floor division")/number(right,"floor division")) elseif operator=="%" then result=number(left,"remainder")%number(right,"remainder") elseif operator=="^" then result=number(left,"power")^number(right,"power") elseif operator==".." then result=scalar(left,"concatenation")..scalar(right,"concatenation") elseif operator=="==" then result=left==right elseif operator=="~=" then result=left~=right elseif operator=="<" then result=left<right elseif operator==">" then result=left>right elseif operator=="<=" then result=left<=right elseif operator==">=" then result=left>=right else fail("unsupported binary operator '"..operator.."'") end
+                -- Native operators so overloaded operators (Vector3/CFrame/UDim2/...)
+                -- dispatch through their metamethods; a non-numeric operand without a
+                -- metamethod still errors natively, preserving Lua semantics.
+                if operator=="+" then result=left+right elseif operator=="-" then result=left-right elseif operator=="*" then result=left*right elseif operator=="/" then result=left/right elseif operator=="//" then result=math_floor(left/right) elseif operator=="%" then result=left%right elseif operator=="^" then result=left^right elseif operator==".." then result=left..right elseif operator=="==" then result=left==right elseif operator=="~=" then result=left~=right elseif operator=="<" then result=left<right elseif operator==">" then result=left>right elseif operator=="<=" then result=left<=right elseif operator==">=" then result=left>=right else fail("unsupported binary operator '"..operator.."'") end
             end
         elseif op=="call" then result=eval_call(id, environment)[1]
         elseif op=="index" or op=="member" then local object=eval(child(id,environment,1),environment); local key=op=="member" and v[2] or eval(child(id,environment,2),environment); if object==nil then fail("attempt to index a nil value") end; result=object[key]
@@ -212,7 +210,7 @@ function Runtime.run(program, options)
                 else result[index]=eval(cid,environment); index=index+1 end
             end
         elseif op == "unary" then
-            local x=eval(child(id,environment,2),environment); if v[1]=="not" then result=not truthy(x) elseif v[1]=="-" then result=-number(x,"unary minus") elseif v[1]=="#" then if type(x)=="string" or type(x)=="table" then result=#x else fail("length requires a string or table") end else fail("unsupported unary operator '"..v[1].."'") end
+            local x=eval(child(id,environment,2),environment); if v[1]=="not" then result=not truthy(x) elseif v[1]=="-" then result=-x elseif v[1]=="#" then result=#x else fail("unsupported unary operator '"..v[1].."'") end
         elseif op=="function" then
             local name, is_local, parameter_count = v[1], v[2], v[3]
             if type(name)~="string" or type(is_local)~="boolean" or type(parameter_count)~="number" or parameter_count<0 then fail("invalid function layout") end

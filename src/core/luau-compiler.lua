@@ -175,8 +175,16 @@ function Compiler.compile(source, executable, options)
     else
         command[1] = quoted_path
     end
+    --[[ quote both redirection targets: the temp path starts with %TEMP%, which can
+         hold spaces (C:\Users\John Doe\...) or, if hostile, shell metacharacters --
+         bare, they break the redirect or inject. ]]
+    local quoted_output = quote_argument(output)
     local quoted_diagnostics = quote_argument(diagnostics)
-    local command_text = table.concat(command, " ") .. " > " .. output .. " 2> " .. diagnostics
+    if not quoted_output or not quoted_diagnostics then
+        remove(input); remove(output); remove(diagnostics)
+        return nil, error_message("temporary path contains shell control characters")
+    end
+    local command_text = table.concat(command, " ") .. " > " .. quoted_output .. " 2> " .. quoted_diagnostics
     local status = os.execute(command_text)
     local successful = status == true or status == 0
     local result, read_error = successful and read_file(output) or nil

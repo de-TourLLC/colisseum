@@ -1,4 +1,4 @@
--- Bytecode container for the parser AST. Never evaluates decoded data.
+-- bytecode container for the parser AST; never evaluates decoded data
 local Bytecode = {}
 
 Bytecode.MAGIC = "CLBC"

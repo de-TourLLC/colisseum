@@ -5,7 +5,11 @@ local function mix(value)
 end
 
 -- Confusable identifiers: a branded prefix plus chars from a tiny lookalike alphabet. Defaults to coli_ + 6-8 of {j,L}, all configurable.
-function Generator.new(seed, config)
+-- `reserved` is an optional set (name -> true) of identifiers already present in the
+-- source: pre-marking them as used guarantees a generated name never collides with an
+-- existing identifier (e.g. a global, an injected helper, or a binding a re-rename pass
+-- leaves alone), which would otherwise silently alias two distinct variables.
+function Generator.new(seed, config, reserved)
     config = config or {}
     local prefix = config.prefix or "coli_"
     local charset = config.charset or "jL"
@@ -17,6 +21,10 @@ function Generator.new(seed, config)
     local nchars = #charset
     local state = tonumber(seed) or os.time()
     local used = {}
+    if reserved ~= nil then
+        if type(reserved) ~= "table" then error("name-generator: reserved must be a table") end
+        for name in pairs(reserved) do used[name] = true end
+    end
     local counter = 0
     local generator = {}
 

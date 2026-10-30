@@ -5,7 +5,7 @@ local Obfuscator = require("src.obfuscator")
 
 local function run()
     Common.header("Preset transformation benchmarks")
-    for _, name in ipairs({ "easy", "medium", "hard", "full", "secure", "total" }) do
+    for _, name in ipairs({ "easy", "medium", "hard", "full", "secure", "total", "fortress" }) do
         Common.measure("preset " .. name, 20, function()
             return Obfuscator.obfuscate(Common.source, { preset = name, target = "lua" })
         end)

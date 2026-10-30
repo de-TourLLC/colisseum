@@ -4,3 +4,5 @@ require("benchmarks.presets")()
 require("benchmarks.parser")()
 require("benchmarks.bytecode")()
 require("benchmarks.runtime")()
+require("benchmarks.overhead")()
+    

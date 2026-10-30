@@ -40,7 +40,7 @@ local Errors = require("src.core.errors")
 
 local function usage()
     io.stderr:write("colisseum: usage:\n")
-    io.stderr:write("  lua cli.lua --preset Easy|Medium|Hard|Full|Total|Fortress [--LuaU|--Roblox --secure --backend native|register|fiu --compiler path] --out output.lua input.lua\n")
+    io.stderr:write("  lua cli.lua --preset Easy|Medium|Hard|Full|Total|Fortress [--LuaU|--Roblox --secure --backend native|register] --out output.lua input.lua\n")
     io.stderr:write("  Fortress = maximum client hardening on the fast register VM (Lua + Luau/Roblox); every static layer + encrypted, permuted, name-mangled bytecode.\n")
     io.stderr:write("  --bloat N (1-16) amplifies injected dead code across every preset. Big but bounded, so output still loads under Roblox/Luau size limits. Default 1.\n")
     io.stderr:write("  --fibonacci (--fib) carries the register-VM bytecode as bit-packed Fibonacci/Zeckendorf codewords (register backend). Adds a one-time decode at VM start.\n")
@@ -48,8 +48,8 @@ local function usage()
     io.stderr:write("  --vm-guard / --no-vm-guard toggles the interpreter-bound tamper gate (executor/debug-hook detection latches a silent drift; on by default in Fortress).\n")
     io.stderr:write("  Every build checks GitHub for updates and asks before applying one; pass --no-update to skip. Updates only fast-forward a clean checkout, never discarding local work.\n")
     io.stderr:write("  lua cli.lua --preset <name> --batch --out <output-dir> file1.lua file2.lua ...\n")
-    io.stderr:write("  backends: native (default) = tree-walking VM; register = faster register VM (2-6x); both run on\n")
-    io.stderr:write("            Lua and Luau/Roblox with no compiler. fiu = real Luau bytecode VM for full Luau syntax (needs --LuaU + compiler).\n")
+    io.stderr:write("  backends: native (default) = tree-walking VM; register = faster register VM (2-6x). Both are\n")
+    io.stderr:write("            Colisseum's own VM and run on Lua and Luau/Roblox with no external compiler.\n")
     os.exit(2)
 end
 
@@ -80,10 +80,17 @@ while index <= #arg do
     elseif value == "--compiler" then
         arguments.compiler = required_value(value)
     elseif value == "--fiu" then
-        arguments.fiu = required_value(value)
-        arguments.backend = "fiu"
+        io.stderr:write("colisseum: the Fiu backend has been retired; Colisseum runs on its own VM only (use --backend register or native)\n")
+        os.exit(2)
     elseif value == "--backend" then
         arguments.backend = required_value(value):lower()
+        if arguments.backend == "fiu" then
+            io.stderr:write("colisseum: the Fiu backend has been retired; Colisseum runs on its own VM only (use --backend register or native)\n")
+            os.exit(2)
+        elseif arguments.backend ~= "native" and arguments.backend ~= "register" then
+            io.stderr:write("colisseum: unknown backend: " .. arguments.backend .. " (use native or register)\n")
+            os.exit(2)
+        end
     elseif value == "--bloat" then
         arguments.bloat = tonumber(required_value(value))
     elseif value == "--fibonacci" or value == "--fib" then
@@ -98,6 +105,12 @@ while index <= #arg do
         arguments.tamperVM = false
     elseif value == "--no-update" then
         arguments.no_update = true
+    elseif value == "--verify" then
+        arguments.verify = true
+    elseif value == "--cache" then
+        arguments.cache = true
+    elseif value == "--no-brand" then
+        arguments.no_brand = true
     elseif value == "--batch" then
         arguments.batch = true
     elseif value == "--jobs" then
@@ -403,8 +416,8 @@ local function render_error(message, context)
     io.stderr:write(USE_COLOR and (RED .. rule .. RESET .. "\n") or (rule .. "\n"))
 end
 
--- Obfuscate one in-memory source string, returning (output, error). Loaded once
--- and reused across every file in a batch, so there is no per-file startup cost.
+--[[ one source string -> (output, err). the obfuscator is required once up top, so
+     a batch reuses it with no per-file startup. ]]
 local function obfuscate_source(source)
     anim_start()
     local output, process_error = obfuscator.try(function()
@@ -430,6 +443,8 @@ local function obfuscate_source(source)
                 fibonacci = arguments.fibonacci,
                 encrypt = arguments.encrypt,
                 tamperVM = arguments.tamperVM,
+                cache = arguments.cache,
+                no_brand = arguments.no_brand,
                 compiler_options = { roblox = arguments.roblox },
                 on_progress = progress
             })
@@ -441,6 +456,8 @@ local function obfuscate_source(source)
             fibonacci = arguments.fibonacci,
             encrypt = arguments.encrypt,
             tamperVM = arguments.tamperVM,
+            cache = arguments.cache,
+            no_brand = arguments.no_brand,
             on_progress = progress
         })
         return transformed
@@ -510,6 +527,17 @@ if not arguments.batch then
         render_error(process_error, { input = arguments.inputs[1], stage = anim.label ~= "" and anim.label or nil })
         os.exit(1)
     end
+    --[[ --verify: load the output to confirm it compiles -- a real check past the
+         structural validator. doesn't run the script, so no side effects. ]]
+    if arguments.verify then
+        local loader = loadstring or load
+        local chunk, load_error = loader(output)
+        if not chunk then
+            io.stderr:write("colisseum: --verify failed: output does not load: " .. tostring(load_error) .. "\n")
+            os.exit(1)
+        end
+        io.stderr:write("verify: output loads cleanly (" .. #output .. " bytes)\n")
+    end
     local ok, message = write_file(arguments.output, output)
     if not ok then
         io.stderr:write("colisseum: cannot write output: " .. tostring(message) .. "\n")
@@ -526,6 +554,11 @@ if arguments.jobs and arguments.jobs > 1 then
         "single-file command in parallel with your shell (PowerShell ForEach-Object -Parallel, or xargs -P).\n")
 end
 local outdir = arguments.output:gsub("[/\\]+$", "")
+-- dir is made via the shell, so reject anything that could break out and inject
+if outdir == "" or outdir:find('[%z\r\n"&|<>^`$%%]') then
+    io.stderr:write("colisseum: invalid output directory (shell metacharacters not allowed): " .. outdir .. "\n")
+    os.exit(2)
+end
 local is_windows = package.config:sub(1, 1) == "\\"
 os.execute((is_windows and 'if not exist "' .. outdir .. '" mkdir "' .. outdir .. '"'
     or 'mkdir -p "' .. outdir .. '"'))

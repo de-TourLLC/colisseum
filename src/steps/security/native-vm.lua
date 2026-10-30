@@ -19,7 +19,7 @@ local this = debug.getinfo(1, "S").source:sub(2)
 local core_dir = (this:match("^(.*[/\\])") or "./") .. "../../core/"
 
 -- Package source into a self-contained chunk: embeds the native VM, carries the program
--- as ChaCha20-encrypted bytecode, decrypts with bitwise ops (no loadstring), runs it.
+-- as ChaCha20-encrypted bytecode, decrypts with bitwise ops (no loadstring), runs it! (idk why i changed it form a . to an ! lol)
 function Step.apply(source, options)
     if type(source) ~= "string" then error("native-vm: source must be a string") end
     if options ~= nil and type(options) ~= "table" then error("native-vm: options must be a table") end
@@ -35,7 +35,8 @@ function Step.apply(source, options)
     local prng = Entropy.prng(tostring(seed) .. "|native-vm")
 
     -- Per-build marker prefix so the bundle carries no fixed scannable names.
-    local prefix = "coli_"
+    local brand_base = (type(options.brand) == "string" and options.brand ~= "" and options.brand) or "coli_"
+    local prefix = brand_base
     for _ = 1, 6 do prefix = prefix .. string.char(97 + prng:range(0, 25)) end
 
     -- Per-build opcode permutation with numeric enum dispatch: each build numbers opcodes
@@ -99,7 +100,7 @@ function Step.apply(source, options)
     local function harden(src, salt, encrypt_strings)
         local seed0 = Package.digest(salt .. "|" .. tostring(seed))
         local function pass(fn) local ok, out = pcall(fn); if ok and type(out) == "string" and #out > 0 then src = out end end
-        pass(function() return Rename.apply(src, { seed = seed0 }) end)
+        pass(function() return Rename.apply(src, { seed = seed0, naming = { prefix = brand_base } }) end)
         if encrypt_strings then
             pass(function() return SplitStrings.apply(src, { seed = seed0, target = "luau" }) end)
             pass(function() return ConstantArray.apply(src, { seed = seed0, target = "luau" }) end)

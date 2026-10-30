@@ -131,7 +131,7 @@ local presets = {
         { "junk-functions", { max_functions = 4, max_bytes = 8192 } },
         { "split-strings", { } },
         { "rename", { } },
-        { "anti-tamper", { threshold = 2, detectExecutor = true, detectTiming = true, detectBeautify = false } },
+        { "anti-tamper", { threshold = 2, detectExecutor = true, detectTiming = false, detectBeautify = true } },
         { "runtime-integrity", { } },
         { "field-index", { } },
         { "junk-comments", { density = 0.22, max_bytes = 16384 } },
@@ -213,6 +213,8 @@ function Obfuscator.obfuscate(source, options)
     options = options or {}
     local target = tostring(options.target or (options.luau and "luau" or "lua")):lower()
     if not targets[target] then error("obfuscator: target must be 'lua' or 'luau'") end
+    -- lower Luau sugar (interpolation, if-else expr) up front so later steps see plain code
+    source = require("src.core.interp-lower").lower_all(source)
     local pipeline = options.steps or Obfuscator.preset(options.preset or "easy")
     -- Native VM bytecode has Lua semantics, so erase Luau-only type metadata before any transforms when the pipeline ends in that VM.
     if target == "luau" then
@@ -227,6 +229,14 @@ function Obfuscator.obfuscate(source, options)
     if not valid then error("obfuscator: syntax structure error at " .. position .. ": " .. message) end
     -- Per-run seed. Explicit options.seed makes a build reproducible; otherwise a fresh seed makes every obfuscation differ.
     local run_seed = Entropy.normalize(options.seed) or Entropy.collect()
+    --[[ brand prefix for generated names. default "coli_"; --no-brand uses a per-build
+         random prefix so no fixed "coli_" anchors the eye or a regex. ]]
+    local brand = "coli_"
+    if type(options.brand) == "string" and options.brand ~= "" then
+        brand = options.brand
+    elseif options.no_brand then
+        brand = "_" .. Entropy.prng(Entropy.mix(run_seed, "brand")):identifier(8):gsub("^_", "") .. "_"
+    end
     -- bloat amplifies every noise step's budget by an integer factor (see apply_bloat).
     local bloat = math.floor(tonumber(options.bloat) or 1)
     if bloat < 1 then bloat = 1 elseif bloat > Obfuscator.BLOAT_MAX then bloat = Obfuscator.BLOAT_MAX end
@@ -270,6 +280,16 @@ function Obfuscator.obfuscate(source, options)
         if name == "vm" and options.tamperVM ~= nil then
             settings.tamperVM = options.tamperVM
         end
+        -- Opt-in constant cache (C1): speeds constant-heavy hot loops in the VM.
+        if name == "vm" and options.cache ~= nil then
+            settings.cache = options.cache
+        end
+        -- Thread the brand prefix into the renamer and the VM backend (L2).
+        if name == "rename" and brand ~= "coli_" then
+            settings.naming = settings.naming or {}
+            if settings.naming.prefix == nil then settings.naming.prefix = brand end
+        end
+        if name == "vm" then settings.brand = brand end
         -- Let the (slow) VM backend report sub-phase progress within its weighted
         -- share, so the bar and ETA keep moving during packaging.
         if report and name == "vm" then
@@ -346,6 +366,7 @@ function Obfuscator.package_luau(source, options)
         fibonacci = options.fibonacci,
         encrypt = encrypt,
         tamperVM = tamperVM,
+        cache = options.cache,
         compiler_options = options.compiler_options
     })
 end

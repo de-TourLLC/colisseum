@@ -15,6 +15,75 @@ local compound_assign = {
     ["%="] = true, ["^="] = true, ["..="] = true,
 }
 
+-- Decode a Luau interpolated-string literal part (interp + standard escapes) to bytes.
+local function interp_decode_literal(s)
+    local out, i, n = {}, 1, #s
+    local simple = { a = "\a", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t", v = "\v",
+        ["\\"] = "\\", ["`"] = "`", ["{"] = "{", ["}"] = "}", ['"'] = '"', ["'"] = "'" }
+    while i <= n do
+        local c = s:sub(i, i)
+        if c ~= "\\" then out[#out + 1] = c; i = i + 1
+        else
+            local e = s:sub(i + 1, i + 1)
+            if simple[e] then out[#out + 1] = simple[e]; i = i + 2
+            elseif e == "x" then out[#out + 1] = string.char(tonumber(s:sub(i + 2, i + 3), 16) or 0); i = i + 4
+            elseif e:match("%d") then local d = s:sub(i + 1):match("^%d%d?%d?"); out[#out + 1] = string.char(tonumber(d)); i = i + 1 + #d
+            else out[#out + 1] = e; i = i + 2 end
+        end
+    end
+    return table.concat(out)
+end
+-- Re-quote raw bytes as an unambiguous "\ddd" Lua string literal for a string node.
+local function interp_quote(bytes)
+    return '"' .. bytes:gsub(".", function(c) return string.format("\\%03d", c:byte()) end) .. '"'
+end
+--[[ desugar an interp token into AST: literal parts and tostring(hole) joined by `..`.
+     holes are sub-parsed with the full parser. ]]
+local function build_interp(raw, pos)
+    local body = raw:sub(2, -2)
+    local nodes, lit, i, n = {}, {}, 1, #raw - 1
+    local function flush()
+        if #lit > 0 then
+            nodes[#nodes + 1] = { kind = "string", value = interp_quote(interp_decode_literal(table.concat(lit))), start = pos, finish = pos }
+            lit = {}
+        end
+    end
+    i = 1; n = #body
+    while i <= n do
+        local c = body:sub(i, i)
+        if c == "\\" then lit[#lit + 1] = body:sub(i, i + 1); i = i + 2
+        elseif c == "{" then
+            flush()
+            local depth, j = 1, i + 1
+            while j <= n and depth > 0 do
+                local cj = body:sub(j, j)
+                if cj == "\\" then j = j + 2
+                elseif cj == "{" then depth = depth + 1; j = j + 1
+                elseif cj == "}" then depth = depth - 1; j = j + 1
+                elseif cj == "\"" or cj == "'" then
+                    local q = cj; j = j + 1
+                    while j <= n do local c2 = body:sub(j, j); if c2 == "\\" then j = j + 2 elseif c2 == q then j = j + 1; break else j = j + 1 end end
+                else j = j + 1 end
+            end
+            local inner = body:sub(i + 1, j - 2)
+            local chunk = Parser.parse("return " .. inner)
+            local expr = chunk.body[1] and chunk.body[1].values and chunk.body[1].values[1]
+            if not expr then error("parser: empty interpolation hole at " .. pos) end
+            nodes[#nodes + 1] = { kind = "call",
+                callee = { kind = "identifier", value = "tostring", start = pos, finish = pos },
+                arguments = { expr }, start = pos, finish = pos }
+            i = j
+        else lit[#lit + 1] = c; i = i + 1 end
+    end
+    flush()
+    if #nodes == 0 then return { kind = "string", value = '""', start = pos, finish = pos } end
+    local acc = nodes[1]
+    for k = 2, #nodes do
+        acc = { kind = "binary", operator = "..", left = acc, right = nodes[k], start = pos, finish = pos }
+    end
+    return acc
+end
+
 local function parser(tokens)
     local object = { tokens = tokens, index = 1, depth = 0, max_depth = 512 }
 
@@ -77,6 +146,28 @@ local function parser(tokens)
     function object:primary_body()
         local token = self:peek()
         if not token then error("parser: unexpected end of input") end
+        if token.kind == "interp" then
+            self:take()
+            return build_interp(token.value, token.start)
+        end
+        if token.value == "if" then
+            --[[ if-else expression: `if c then a elseif c2 then b else z` (else is
+                 required). only reached in expression position; the statement form is
+                 handled in statement(). ]]
+            self:take()
+            local clauses = { { cond = self:expression(0) } }
+            self:expect("then")
+            clauses[1].value = self:expression(0)
+            while self:peek() and self:peek().value == "elseif" do
+                self:take()
+                local cond = self:expression(0)
+                self:expect("then")
+                clauses[#clauses + 1] = { cond = cond, value = self:expression(0) }
+            end
+            self:expect("else")
+            local fallback = self:expression(0)
+            return { kind = "ifexpr", clauses = clauses, fallback = fallback, start = token.start, finish = fallback.finish }
+        end
         if token.value == "(" then
             self:take()
             local value = self:expression(0)
@@ -216,6 +307,20 @@ local function parser(tokens)
         if token.value == "break" then
             self:take()
             return { kind = "break", start = token.start, finish = token.finish }
+        end
+        --[[ `continue` is contextual: a statement unless the next token makes it the
+             start of an expression (call/index/assign/binary op/call-sugar), so a
+             variable named `continue` still works. ]]
+        if token.value == "continue" then
+            local nt = self.tokens[self.index + 1]
+            local as_expr = nt ~= nil and (nt.kind == "string"
+                or precedence[nt.value] ~= nil or compound_assign[nt.value] ~= nil
+                or nt.value == "=" or nt.value == "," or nt.value == "." or nt.value == ":"
+                or nt.value == "[" or nt.value == "(" or nt.value == "{")
+            if not as_expr then
+                self:take()
+                return { kind = "continue", start = token.start, finish = token.finish }
+            end
         end
         if token.value == "function" or (token.value == "local" and self.tokens[self.index + 1] and self.tokens[self.index + 1].value == "function") then
             local local_function = token.value == "local"

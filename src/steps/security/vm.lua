@@ -38,6 +38,9 @@ function Step.apply(source, options)
     if options.backend == "register" then
         return require("src.steps.security.register-vm").apply(source, options)
     end
+    if options.backend == "fiu" then
+        error("vm: the Fiu backend has been retired; Colisseum runs on its own VM (use the register or native backend)")
+    end
     if options.backend ~= "fiu" then
         return require("src.steps.security.native-vm").apply(source, options)
     end

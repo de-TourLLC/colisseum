@@ -70,18 +70,42 @@ function Lexer.scan(source)
                 else index = index + 1 end
             end
             add(result, "string", source:sub(start, index - 1), start, index - 1, true)
+        elseif char == "`" then
+            --[[ Luau interpolated string: grab it whole, tracking {} hole depth and
+                 skipping quoted strings inside holes so a } or backtick there doesn't
+                 end it early. the parser desugars it. ]]
+            local j = index + 1
+            local depth = 0
+            while j <= #source do
+                local ch = source:sub(j, j)
+                if ch == "\\" then j = j + 2
+                elseif depth == 0 and ch == "`" then j = j + 1; break
+                elseif ch == "{" then depth = depth + 1; j = j + 1
+                elseif ch == "}" and depth > 0 then depth = depth - 1; j = j + 1
+                elseif (ch == "\"" or ch == "'") and depth > 0 then
+                    local q = ch; j = j + 1
+                    while j <= #source do
+                        local c2 = source:sub(j, j)
+                        if c2 == "\\" then j = j + 2 elseif c2 == q then j = j + 1; break else j = j + 1 end
+                    end
+                else j = j + 1 end
+            end
+            add(result, "interp", source:sub(index, j - 1), index, j - 1, true)
+            index = j
         elseif char:match("[%a_]") then
             index = index + 1
             while source:sub(index, index):match("[%w_]") do index = index + 1 end
             add(result, "identifier", source:sub(start, index - 1), start, index - 1)
         elseif char:match("%d") or (char == "." and source:sub(index + 1, index + 1):match("%d")) then
-            local value = source:sub(index):match("^0[xX]%x+") or
-                source:sub(index):match("^0[bB][01]+") or
-                source:sub(index):match("^%d+%.?%d*[eE][%+%-]?%d+") or
-                source:sub(index):match("^%d+%.?%d*") or
-                source:sub(index):match("^%.[%d]+")
+            --[[ `_` digit separators (1_000_000): accept them, then store the value
+                 with underscores stripped so tonumber works and the literal stays valid. ]]
+            local value = source:sub(index):match("^0[xX][%x_]+") or
+                source:sub(index):match("^0[bB][01_]+") or
+                source:sub(index):match("^%d[%d_]*%.?[%d_]*[eE][%+%-]?[%d_]+") or
+                source:sub(index):match("^%d[%d_]*%.?[%d_]*") or
+                source:sub(index):match("^%.[%d_]+")
             index = index + #value
-            add(result, "number", source:sub(start, index - 1), start, index - 1)
+            add(result, "number", (source:sub(start, index - 1):gsub("_", "")), start, index - 1)
         else
             local three = source:sub(index, index + 2)
             local two = source:sub(index, index + 1)

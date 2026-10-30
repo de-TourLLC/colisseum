@@ -34,8 +34,16 @@ end
 function Step.apply(source, options)
     if type(source) ~= "string" then error("rename: source must be a string") end
     options = options or {}
-    local generator = Names.new(options.seed, options.naming)
     local tokens = Lexer.scan(source)
+    -- Collect every identifier already present in the source so generated names never
+    -- collide with an existing name. Without this, re-renaming an already-obfuscated
+    -- source could mint a name equal to one still in use (e.g. a pooled-constant table),
+    -- aliasing two distinct variables and corrupting the program for some seeds.
+    local existing = {}
+    for _, token in ipairs(tokens) do
+        if token.kind == "identifier" then existing[token.value] = true end
+    end
+    local generator = Names.new(options.seed, options.naming, existing)
     local root = scope(nil, "root")
     local current = root
     local replacements = {}

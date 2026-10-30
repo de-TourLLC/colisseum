@@ -1,8 +1,10 @@
--- Register VM instruction set. A program is a tree of protos, each with a flat
--- instruction stream of { opcode, a, b, c } arrays, constants, child protos, and upvalues.
--- Registers are a per-frame array; captured locals are boxed into cells the CELL opcodes
--- read through. An RK operand encodes a constant as a negative index, so one field names
--- either a register (>=0) or a constant.
+--[[
+    Register VM instruction set. A program is a tree of protos, each a flat stream of
+    { opcode, a, b, c }, its constants, child protos and upvalues. Registers are a
+    per-frame array; captured locals live in cells the CELL opcodes read through. An RK
+    operand encodes a constant as a negative index -- one field names a register (>=0)
+    or a constant (<0).
+]]
 
 local RegBytecode = {}
 
@@ -41,6 +43,12 @@ local names = {
     "FUSEMM",     -- MOVE;MOVE
     "FUSELL",     -- LOADK;LOADK
     "FUSEGG",     -- GETGLOBAL;GETGLOBAL
+    "FUSEML",     -- MOVE;LOADK
+    "FUSELM",     -- LOADK;MOVE
+    "FUSEMG",     -- MOVE;GETGLOBAL
+    "FUSEGM",     -- GETGLOBAL;MOVE
+    "FUSELG",     -- LOADK;GETGLOBAL
+    "FUSEGL",     -- GETGLOBAL;LOADK
 }
 
 local by_name, by_code = {}, {}
@@ -59,9 +67,21 @@ end
 -- Superoperator peephole: fuses the first of an adjacent pair, keeping the second as a
 -- jump target. `enabled` gates pair kinds (MM/LL/GG), nil = all. Mutates the tree in place.
 local FUSE = {
-    [by_name.MOVE]      = { [by_name.MOVE]      = { op = by_name.FUSEMM, k = "MM" } },
-    [by_name.LOADK]     = { [by_name.LOADK]     = { op = by_name.FUSELL, k = "LL" } },
-    [by_name.GETGLOBAL] = { [by_name.GETGLOBAL] = { op = by_name.FUSEGG, k = "GG" } },
+    [by_name.MOVE] = {
+        [by_name.MOVE] = { op = by_name.FUSEMM, k = "MM" },
+        [by_name.LOADK] = { op = by_name.FUSEML, k = "ML" },
+        [by_name.GETGLOBAL] = { op = by_name.FUSEMG, k = "MG" },
+    },
+    [by_name.LOADK] = {
+        [by_name.LOADK] = { op = by_name.FUSELL, k = "LL" },
+        [by_name.MOVE] = { op = by_name.FUSELM, k = "LM" },
+        [by_name.GETGLOBAL] = { op = by_name.FUSELG, k = "LG" },
+    },
+    [by_name.GETGLOBAL] = {
+        [by_name.GETGLOBAL] = { op = by_name.FUSEGG, k = "GG" },
+        [by_name.MOVE] = { op = by_name.FUSEGM, k = "GM" },
+        [by_name.LOADK] = { op = by_name.FUSEGL, k = "GL" },
+    },
 }
 function RegBytecode.fuse(proto, enabled)
     local code = proto.code

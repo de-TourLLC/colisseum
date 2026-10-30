@@ -1,5 +1,5 @@
--- Luau types are compile-time metadata; erase type syntax before source reaches the Lua AST.
--- Token-based, preserves newlines, strings, and comments.
+--[[ Luau types are compile-time only; strip type syntax before the source reaches the
+     Lua AST. token-based, keeps newlines, strings and comments. ]]
 local Lexer = require("src.core.lexer")
 
 local Types = {}

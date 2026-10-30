@@ -33,6 +33,19 @@ end
 
 -- Fresh per-build seed: a wide string of two 31-bit folds (~62 bits). The counter
 -- keeps two calls in the same clock tick from colliding.
+--[[ a few bytes of /dev/urandom where present (POSIX); "" on Windows/sandboxes, where
+     collect() falls back to its time+ASLR material. makes seeds unpredictable, not
+     just unique. ]]
+local function os_random_bytes(n)
+    local ok, handle = pcall(io.open, "/dev/urandom", "rb")
+    if ok and handle then
+        local bytes = handle:read(n)
+        handle:close()
+        if type(bytes) == "string" then return bytes end
+    end
+    return ""
+end
+
 function Entropy.collect()
     counter = counter + 1
     local material = table.concat({
@@ -40,7 +53,8 @@ function Entropy.collect()
         tostring(os.clock()),
         tostring({}),          -- heap address; varies per run (ASLR) and per call
         tostring(Entropy),     -- table address, another ASLR source
-        tostring(counter)
+        tostring(counter),
+        os_random_bytes(16)    -- strong OS entropy where available (POSIX /dev/urandom)
     }, "|")
     -- Fold the material from two starting states and join for wider entropy.
     local a = fold(material, 2166136261)

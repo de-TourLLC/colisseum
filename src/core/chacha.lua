@@ -70,13 +70,26 @@ ChaCha.block = block
 -- Derive 8 key words, 3 nonce words and a start counter from the per-build fog bytes.
 function ChaCha.derive(fog)
     local nf = #fog
-    -- Expand the fog into 44 bytes with a simple multiplicative PRNG (portable).
-    local state = 2166136261
-    for i = 1, nf do state = (state + fog[i] * 16777619) % 4294967296; state = (state * 48271) % 4294967296 end
+    --[[ fold the fog into four 32-bit states and mix all four into every output byte,
+         so key+nonce depend on ~128 bits of state, not one 32-bit value.
+         reg-runtime's cc_derive mirrors this exactly. ]]
+    local M = 4294967296
+    local a, b, c, d = 2166136261, 2246822519, 3266489917, 668265263
+    for i = 1, nf do
+        local x = fog[i]
+        a = (a + x * 16777619) % M;  a = (a * 48271) % M
+        b = (b + x * 40503 + 1) % M; b = (b * 1664525 + 1013904223) % M
+        c = (c + x * 2654435761) % M; c = (c * 22695477 + 1) % M
+        d = (d + x * 2246822519 + 1) % M; d = (d * 134775813 + 1) % M
+    end
     local bytes = {}
     for i = 1, 44 do
-        state = (state * 1103515245 + 12345) % 4294967296
-        bytes[i] = floor(state / 65536) % 256
+        a = (a * 1103515245 + 12345) % M
+        b = (b * 1664525 + 1013904223) % M
+        c = (c * 22695477 + 1) % M
+        d = (d * 134775813 + 1) % M
+        local mixed = (a + b * 7 + c * 13 + d * 17) % M
+        bytes[i] = floor(mixed / 256) % 256
     end
     local function word(o) return bytes[o] + bytes[o + 1] * 256 + bytes[o + 2] * 65536 + bytes[o + 3] * 16777216 end
     local key, nonce = {}, {}

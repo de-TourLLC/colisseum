@@ -89,10 +89,25 @@ local function cc_block(key, counter, nonce)
 end
 local function cc_derive(fog)
     local nf = #fog
-    local state = 2166136261
-    for i = 1, nf do state = (state + fog[i] * 16777619) % 4294967296; state = (state * 48271) % 4294967296 end
+    -- mirror of ChaCha.derive in chacha.lua; keep byte-identical or the keystream drifts
+    local M = 4294967296
+    local a, b, c, d = 2166136261, 2246822519, 3266489917, 668265263
+    for i = 1, nf do
+        local x = fog[i]
+        a = (a + x * 16777619) % M;  a = (a * 48271) % M
+        b = (b + x * 40503 + 1) % M; b = (b * 1664525 + 1013904223) % M
+        c = (c + x * 2654435761) % M; c = (c * 22695477 + 1) % M
+        d = (d + x * 2246822519 + 1) % M; d = (d * 134775813 + 1) % M
+    end
     local bytes = {}
-    for i = 1, 44 do state = (state * 1103515245 + 12345) % 4294967296; bytes[i] = kk_floor(state / 65536) % 256 end
+    for i = 1, 44 do
+        a = (a * 1103515245 + 12345) % M
+        b = (b * 1664525 + 1013904223) % M
+        c = (c * 22695477 + 1) % M
+        d = (d * 134775813 + 1) % M
+        local mixed = (a + b * 7 + c * 13 + d * 17) % M
+        bytes[i] = kk_floor(mixed / 256) % 256
+    end
     local function word(o) return bytes[o] + bytes[o + 1] * 256 + bytes[o + 2] * 65536 + bytes[o + 3] * 16777216 end
     local key, nonce = {}, {}
     for i = 1, 8 do key[i] = word((i - 1) * 4 + 1) end
@@ -190,17 +205,24 @@ function Runtime.run(program, options)
         return kk_concat(out)
     end
     -- Typed constant pool accessor (region id -> constant index).
+    --[[ optional constant cache (program.kc / --cache): decode each constant from the
+         blob once and keep it, instead of rebuilding it on every access -- big win in
+         constant-heavy loops. off by default, so max-security builds keep decode-on-
+         demand. keyed by the constant's blob offset. ]]
+    local kcache = program.kc and {} or nil
     local function kget(reg, ki)
         local off = reg.o[ki]
-        local t = bget(off)
-        if t == 0 then
-            return kk_tonumber(sget(off + 1))
-        elseif t == 1 then
-            return sget(off + 1)
-        elseif t == 2 then
-            return bget(off + 1) == 1
+        if kcache then
+            local cached = kcache[off]
+            if cached ~= nil then return cached end
         end
-        return nil
+        local t = bget(off)
+        local v
+        if t == 0 then v = kk_tonumber(sget(off + 1))
+        elseif t == 1 then v = sget(off + 1)
+        elseif t == 2 then v = (bget(off + 1) == 1) end
+        if kcache then kcache[off] = v end
+        return v
     end
 
     local step_limit = options.steps or Runtime.LIMITS.steps
@@ -244,6 +266,19 @@ function Runtime.run(program, options)
             end
         end
         if tripped then hp = 1 + (steps % 3) end
+    end
+
+    --[[ self-hash: rehash the shipped blob and latch the silent drift if it no longer
+         matches the value baked at build, so an in-memory patch quietly corrupts
+         results. mirrors register-vm's blob_hash over the raw program.S. ]]
+    if program.h then
+        local ps = program.S
+        local h = 2166136261 % 2147483647
+        for i = 1, #ps do
+            h = (h + ps:byte(i) * 16777619) % 2147483647
+            h = (h * 48271) % 2147483647
+        end
+        if h ~= program.h then hp = 1 + (steps % 3) end
     end
 
     local execute_proto  -- forward
@@ -325,13 +360,16 @@ function Runtime.run(program, options)
             elseif op == OP.GETTABLE then R[a] = R[b][RK(c)]
             elseif op == OP.SETTABLE then R[a][RK(b)] = RK(c)
             elseif op == OP.SELF then local o = R[b]; R[a + 1] = o; R[a] = o[RK(c)]
-            elseif op == OP.ADD then R[a] = RK(b) + RK(c) + hp
-            elseif op == OP.SUB then R[a] = RK(b) - RK(c) + hp
-            elseif op == OP.MUL then R[a] = RK(b) * RK(c) + hp
-            elseif op == OP.DIV then R[a] = RK(b) / RK(c) + hp
-            elseif op == OP.MOD then R[a] = RK(b) % RK(c) + hp
-            elseif op == OP.POW then R[a] = RK(b) ^ RK(c) + hp
-            elseif op == OP.IDIV then R[a] = kk_floor(RK(b) / RK(c)) + hp
+            --[[ native operators, so overloaded types (Vector3/CFrame/...) dispatch
+                 through their metamethods. the drift touches numbers only, so a clean
+                 run (hp==0) never follows v1+v2 with a +0 that would re-run __add. ]]
+            elseif op == OP.ADD then local v = RK(b) + RK(c); if hp ~= 0 and kk_type(v) == "number" then v = v + hp end; R[a] = v
+            elseif op == OP.SUB then local v = RK(b) - RK(c); if hp ~= 0 and kk_type(v) == "number" then v = v + hp end; R[a] = v
+            elseif op == OP.MUL then local v = RK(b) * RK(c); if hp ~= 0 and kk_type(v) == "number" then v = v + hp end; R[a] = v
+            elseif op == OP.DIV then local v = RK(b) / RK(c); if hp ~= 0 and kk_type(v) == "number" then v = v + hp end; R[a] = v
+            elseif op == OP.MOD then local v = RK(b) % RK(c); if hp ~= 0 and kk_type(v) == "number" then v = v + hp end; R[a] = v
+            elseif op == OP.POW then local v = RK(b) ^ RK(c); if hp ~= 0 and kk_type(v) == "number" then v = v + hp end; R[a] = v
+            elseif op == OP.IDIV then local v = kk_floor(RK(b) / RK(c)); if hp ~= 0 and kk_type(v) == "number" then v = v + hp end; R[a] = v
             elseif op == OP.CONCAT then R[a] = RK(b) .. RK(c)
             elseif op == OP.EQ then R[a] = RK(b) == RK(c)
             elseif op == OP.NE then R[a] = RK(b) ~= RK(c)
@@ -341,7 +379,10 @@ function Runtime.run(program, options)
             elseif op == OP.GE then R[a] = RK(b) >= RK(c)
             elseif op == OP.NOT then local x = RK(b); R[a] = (x == nil or x == false)
             elseif op == OP.NEG then R[a] = -RK(b)
-            elseif op == OP.LEN then R[a] = #RK(b)
+            elseif op == OP.LEN then
+                -- honor __len (5.1 ignores it, Luau invokes it) to match the target
+                local _x = RK(b); local _mt = getmetatable(_x)
+                if _mt and _mt.__len then R[a] = _mt.__len(_x) else R[a] = #_x end
             elseif op == OP.JMP then pc = pc + a
             elseif op == OP.TEST then
                 local x = R[a]; local truth = (x ~= nil and x ~= false)
@@ -351,7 +392,11 @@ function Runtime.run(program, options)
                 local args = {}
                 for i = 1, n do args[i] = R[a + i] end
                 local func = R[a]
-                if kk_type(func) ~= "function" then kk_error("attempt to call a " .. kk_type(func) .. " value", 0) end
+                if kk_type(func) ~= "function" then
+                    -- callable object? (__call) let the native call run it; else error
+                    local mt = getmetatable(func)
+                    if not (mt and mt.__call) then kk_error("attempt to call a " .. kk_type(func) .. " value", 0) end
+                end
                 local rets = pack(func(unpack_fn(args, 1, n)))
                 local nres = rets.n
                 if c == 0 then
@@ -413,6 +458,36 @@ function Runtime.run(program, options)
                 R[a] = globals[kget(reg, b)]
                 local o2 = off + 13
                 R[vget(o2 + 1)] = globals[kget(reg, vget(o2 + 5))]
+                pc = pc + 1
+            elseif op == OP.FUSEML then
+                R[a] = R[b]
+                local o2 = off + 13
+                R[vget(o2 + 1)] = kget(reg, vget(o2 + 5))
+                pc = pc + 1
+            elseif op == OP.FUSELM then
+                R[a] = kget(reg, b)
+                local o2 = off + 13
+                R[vget(o2 + 1)] = R[vget(o2 + 5)]
+                pc = pc + 1
+            elseif op == OP.FUSEMG then
+                R[a] = R[b]
+                local o2 = off + 13
+                R[vget(o2 + 1)] = globals[kget(reg, vget(o2 + 5))]
+                pc = pc + 1
+            elseif op == OP.FUSEGM then
+                R[a] = globals[kget(reg, b)]
+                local o2 = off + 13
+                R[vget(o2 + 1)] = R[vget(o2 + 5)]
+                pc = pc + 1
+            elseif op == OP.FUSELG then
+                R[a] = kget(reg, b)
+                local o2 = off + 13
+                R[vget(o2 + 1)] = globals[kget(reg, vget(o2 + 5))]
+                pc = pc + 1
+            elseif op == OP.FUSEGL then
+                R[a] = globals[kget(reg, b)]
+                local o2 = off + 13
+                R[vget(o2 + 1)] = kget(reg, vget(o2 + 5))
                 pc = pc + 1
             else
                 kk_error("invalid instruction", 0)

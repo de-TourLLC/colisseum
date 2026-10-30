@@ -10,9 +10,9 @@ local KEYWORDS = {
     ["else"] = true, ["until"] = true, ["end"] = true,
 }
 
--- Lightweight structural validation over a token stream: balanced brackets and
--- balanced block structure (if/while/for/function/repeat/do ... end/until). Not a
--- full parser, but safe for the Lua and Luau token sets the obfuscator emits.
+--[[ structural check over a token stream: balanced brackets and balanced blocks
+     (if/while/for/function/repeat/do ... end/until). not a full parser, but enough
+     for the token sets the obfuscator emits. ]]
 function Validate.syntax(source)
     local stack = {}
     local pairs = { [")"] = "(", ["]"] = "[", ["}"] = "{" }

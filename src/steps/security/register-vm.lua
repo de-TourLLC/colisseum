@@ -35,7 +35,8 @@ function Step.apply(source, options)
     local prng = Entropy.prng(tostring(seed) .. "|register-vm")
 
     -- Per-build marker prefix so the bundle carries no fixed scannable names.
-    local prefix = "coli_"
+    local brand_base = (type(options.brand) == "string" and options.brand ~= "" and options.brand) or "coli_"
+    local prefix = brand_base
     for _ = 1, 6 do prefix = prefix .. string.char(97 + prng:range(0, 25)) end
 
     -- Per-build opcode permutation: shuffle the opcode numbers, remap the program to match,
@@ -45,8 +46,13 @@ function Step.apply(source, options)
     report(0.0, "vm:compiling")
     local mainproto = RegCompiler.compile(source)
     -- Per-build superoperators: randomly enable each fusable pair (at least one on).
-    local fuse_enabled = { MM = prng:range(0, 1) == 1, LL = prng:range(0, 1) == 1, GG = prng:range(0, 1) == 1 }
-    if not (fuse_enabled.MM or fuse_enabled.LL or fuse_enabled.GG) then fuse_enabled.MM = true end
+    local fuse_enabled = {}
+    local any_fuse = false
+    for _, k in ipairs({ "MM", "LL", "GG", "ML", "LM", "MG", "GM", "LG", "GL" }) do
+        fuse_enabled[k] = prng:range(0, 1) == 1
+        any_fuse = any_fuse or fuse_enabled[k]
+    end
+    if not any_fuse then fuse_enabled.MM = true end
     RegBytecode.fuse(mainproto, fuse_enabled)
     local opcount = RegBytecode.COUNT
     local perm = {}
@@ -91,6 +97,9 @@ function Step.apply(source, options)
     -- the same RFC 8439 keystream from the fog and un-masks on demand, so the program never materializes.
     local enc_field = ""
     if options.encrypt then enc_field = ",enc=1" end
+    -- Opt-in constant cache (C1): decode each constant once at runtime (faster hot loops).
+    local kc_field = ""
+    if options.cache then kc_field = ",kc=1" end
     -- Interpreter-bound tamper gate (opt-in, default in fortress). Executor/injector marker
     -- names travel escaped byte-by-byte (no plaintext "getgenv" in the bundle); reg-runtime
     -- latches a silent honeypot drift if any is present at start, so the response lives in the VM.
@@ -118,8 +127,37 @@ function Step.apply(source, options)
         blob = packed
         fib_field = ",fib=" .. bitlen
     end
+    --[[ self-hash of the shipped blob: the interpreter recomputes it at start and
+         latches the drift if the blob was patched in memory. mirrored by reg-runtime. ]]
+    local function blob_hash(s)
+        local h = 2166136261 % 2147483647
+        for i = 1, #s do
+            h = (h + s:byte(i) * 16777619) % 2147483647
+            h = (h * 48271) % 2147483647
+        end
+        return h
+    end
+    local h_field = ",h=" .. blob_hash(blob)
     local fog_literal = "{" .. table.concat(fog, ",") .. "}"
-    local blob_literal = '"' .. blob:gsub(".", function(c) return string.format("\\%03d", c:byte()) end) .. '"'
+    --[[ fragment the blob into several literals concatenated at load, so the payload
+         isn't one contiguous string to a dump or a grep. reconstructed S is identical,
+         so the self-hash still matches. ]]
+    local function escape_bytes(s) return (s:gsub(".", function(c) return string.format("\\%03d", c:byte()) end)) end
+    local blob_literal
+    do
+        local npieces = prng:range(3, 6)
+        if #blob < npieces then npieces = 1 end
+        local cuts, seen = {}, {}
+        while #cuts < npieces - 1 do
+            local p = prng:range(1, #blob - 1)
+            if not seen[p] then seen[p] = true; cuts[#cuts + 1] = p end
+        end
+        table.sort(cuts)
+        local pieces, prev = {}, 0
+        for _, p in ipairs(cuts) do pieces[#pieces + 1] = '"' .. escape_bytes(blob:sub(prev + 1, p)) .. '"'; prev = p end
+        pieces[#pieces + 1] = '"' .. escape_bytes(blob:sub(prev + 1)) .. '"'
+        blob_literal = (#pieces == 1) and pieces[1] or ("(" .. table.concat(pieces, "..") .. ")")
+    end
     local regs_parts, max_id = {}, 0
     for id in pairs(regs) do if id > max_id then max_id = id end end
     for id = 0, max_id do
@@ -154,7 +192,7 @@ function Step.apply(source, options)
     local function harden(src, salt, encrypt_strings)
         local seed0 = Package.digest(salt .. "|" .. tostring(seed))
         local function pass(fn) local ok, out = pcall(fn); if ok and type(out) == "string" and #out > 0 then src = out end end
-        pass(function() return Rename.apply(src, { seed = seed0 }) end)
+        pass(function() return Rename.apply(src, { seed = seed0, naming = { prefix = brand_base } }) end)
         if encrypt_strings then
             pass(function() return SplitStrings.apply(src, { seed = seed0, target = "luau" }) end)
             pass(function() return ConstantArray.apply(src, { seed = seed0, target = "luau" }) end)
@@ -346,7 +384,7 @@ function Step.apply(source, options)
     -- it is safe to yield, so heavy synchronous loops do not hit the execution-time
     -- limit. No-op where no scheduler exists.
     local run_stmt = "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G ..
-        ",o=" .. O .. fib_field .. enc_field .. m_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})"
+        ",o=" .. O .. fib_field .. enc_field .. m_field .. h_field .. kc_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})"
     local bundle = table.concat({
         head,
         table.concat(mids, "\n"),

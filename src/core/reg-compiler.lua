@@ -229,6 +229,18 @@ local function compile_function(params, body, is_vararg, parent)
 
     -- Decode a string literal (source spelling) to its value; handles long strings
     -- and all Lua escapes (\ddd, \xHH), matching reference Lua exactly.
+    -- Encode a Unicode code point as UTF-8 bytes (for Luau's `\u{XXXX}` escape).
+    local function utf8_encode(cp)
+        if cp < 0x80 then return string.char(cp)
+        elseif cp < 0x800 then
+            return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
+        elseif cp < 0x10000 then
+            return string.char(0xE0 + math.floor(cp / 0x1000), 0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+        else
+            return string.char(0xF0 + math.floor(cp / 0x40000), 0x80 + math.floor(cp / 0x1000) % 0x40,
+                0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+        end
+    end
     local ESC = { a = "\a", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t", v = "\v", ["\\"] = "\\", ['"'] = '"', ["'"] = "'", ["\n"] = "\n" }
     local function decode_string_literal(src)
         if src:sub(1, 1) == "[" then
@@ -252,6 +264,10 @@ local function compile_function(params, body, is_vararg, parent)
                     out[#out + 1] = string.char(tonumber(dec)); i = i + 1 + #dec
                 elseif e == "z" then
                     i = i + 2; while i <= n and body:sub(i, i):match("%s") do i = i + 1 end
+                elseif e == "u" and body:sub(i + 2, i + 2) == "{" then
+                    local hex = body:sub(i + 3):match("^(%x+)}")
+                    if hex then out[#out + 1] = utf8_encode(tonumber(hex, 16)); i = i + 4 + #hex
+                    else out[#out + 1] = e; i = i + 2 end
                 else out[#out + 1] = e; i = i + 2 end
             end
         end
@@ -323,6 +339,22 @@ local function compile_function(params, body, is_vararg, parent)
             emit(OP.CLOSURE, reg, proto_index)
         elseif k == "table" then
             compile_table(node, reg)
+        elseif k == "ifexpr" then
+            --[[ each clause: test the cond, write its value into reg -- like the
+                 if-statement but producing a value, not a block. ]]
+            local end_jumps = {}
+            for _, clause in ipairs(node.clauses) do
+                local save = fs.freereg
+                local c = expr_any(clause.cond)
+                emit(OP.TEST, c, 0)
+                local skip = emit(OP.JMP, 0)
+                fs.freereg = save
+                expr_to(clause.value, reg)
+                end_jumps[#end_jumps + 1] = emit(OP.JMP, 0)
+                code[skip][2] = here() - skip
+            end
+            expr_to(node.fallback, reg)
+            for _, j in ipairs(end_jumps) do code[j][2] = here() - j end
         else
             error("reg-compiler: cannot compile expression kind '" .. tostring(k) .. "'")
         end
@@ -605,6 +637,11 @@ local function compile_function(params, body, is_vararg, parent)
             if not loop then error("reg-compiler: break outside loop") end
             local j = emit(OP.JMP, 0)
             loop.breaks[#loop.breaks + 1] = j
+        elseif k == "continue" then
+            local loop = fs.loops[#fs.loops]
+            if not loop then error("reg-compiler: continue outside loop") end
+            local j = emit(OP.JMP, 0)
+            loop.continues[#loop.continues + 1] = j
         elseif k == "do" then
             compile_block(stmt.body)
         elseif k == "if" then
@@ -647,28 +684,32 @@ local function compile_function(params, body, is_vararg, parent)
         local c = expr_any(stmt.condition)
         emit(OP.TEST, c, 0)
         local exit = emit(OP.JMP, 0)
-        fs.loops[#fs.loops + 1] = { breaks = {} }
+        fs.loops[#fs.loops + 1] = { breaks = {}, continues = {} }
         fs.freereg = fs.nactive
         compile_block(stmt.body)
         emit(OP.JMP, top - here() - 1) -- jump back to top
         code[exit][2] = here() - exit
         local loop = fs.loops[#fs.loops]; fs.loops[#fs.loops] = nil
         for _, j in ipairs(loop.breaks) do code[j][2] = here() - j end
+        -- continue re-evaluates the condition: jump back to the loop top.
+        for _, j in ipairs(loop.continues) do code[j][2] = top - j end
     end
 
     compile_repeat = function(stmt)
         local top = here()
-        fs.loops[#fs.loops + 1] = { breaks = {} }
+        fs.loops[#fs.loops + 1] = { breaks = {}, continues = {} }
         local m1, m2, m3 = scope_mark()
         fs.freereg = fs.nactive
         for _, s in ipairs(stmt.body) do compile_stmt(s) end
         fs.freereg = fs.nactive
+        local cond_at = here()            -- continue jumps here: evaluate the until-cond
         local c = expr_any(stmt.condition)
         emit(OP.TEST, c, 0)               -- if cond falsy -> loop again
         emit(OP.JMP, top - here() - 1)
         scope_restore(m1, m2, m3)
         local loop = fs.loops[#fs.loops]; fs.loops[#fs.loops] = nil
         for _, j in ipairs(loop.breaks) do code[j][2] = here() - j end
+        for _, j in ipairs(loop.continues) do code[j][2] = cond_at - j end
     end
 
     compile_for = function(stmt)
@@ -683,7 +724,7 @@ local function compile_function(params, body, is_vararg, parent)
         fs.nactive = base + 4
         if fs.maxstack < fs.nactive then fs.maxstack = fs.nactive end
         local prep = emit(OP.FORPREP, base, 0)
-        fs.loops[#fs.loops + 1] = { breaks = {} }
+        fs.loops[#fs.loops + 1] = { breaks = {}, continues = {} }
         -- declare loop variable at base+3
         local cap = fs.captured[stmt.name] == true
         fs.actives[#fs.actives + 1] = { name = stmt.name, reg = base + 3, captured = cap }
@@ -694,9 +735,11 @@ local function compile_function(params, body, is_vararg, parent)
         fs.freereg = fs.nactive
         compile_block(stmt.body)
         code[prep][3] = here() - prep  -- FORPREP jumps to the FORLOOP emitted next
+        local forloop_at = here()      -- continue jumps here: the step/test
         emit(OP.FORLOOP, base, body_start - here() - 1)
         local loop = fs.loops[#fs.loops]; fs.loops[#fs.loops] = nil
         for _, j in ipairs(loop.breaks) do code[j][2] = here() - j end
+        for _, j in ipairs(loop.continues) do code[j][2] = forloop_at - j end
         scope_restore(m1, m2, m3)
     end
 
@@ -721,7 +764,7 @@ local function compile_function(params, body, is_vararg, parent)
         fs.nactive = base + 3 + nnames
         if fs.maxstack < fs.nactive then fs.maxstack = fs.nactive end
         local jmp_to_call = emit(OP.JMP, 0) -- jump to TFORCALL
-        fs.loops[#fs.loops + 1] = { breaks = {} }
+        fs.loops[#fs.loops + 1] = { breaks = {}, continues = {} }
         -- declare loop vars
         for i = 1, nnames do
             local name = stmt.names[i]
@@ -736,11 +779,13 @@ local function compile_function(params, body, is_vararg, parent)
         end
         fs.freereg = fs.nactive
         compile_block(stmt.body)
+        local tforcall_at = here()     -- continue jumps here: the iterator call
         code[jmp_to_call][2] = here() - jmp_to_call
         emit(OP.TFORCALL, base, 0, nnames)
         emit(OP.TFORLOOP, base, body_start - here() - 1)
         local loop = fs.loops[#fs.loops]; fs.loops[#fs.loops] = nil
         for _, j in ipairs(loop.breaks) do code[j][2] = here() - j end
+        for _, j in ipairs(loop.continues) do code[j][2] = tforcall_at - j end
         scope_restore(m1, m2, m3)
     end
 

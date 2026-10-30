@@ -4,6 +4,9 @@ vendor/NewObfs/
 # Luau build artifacts and binaries
 build/
 
+# haha test
+xevon/
+afar-colisseum/
 # Obfuscation outputs (regenerable; reveal structure -- keep private)
 *.obfuscated.lua
 *.out.lua
@@ -33,3 +36,6 @@ tmp/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Private planning notes (never upload)
+*.local.md

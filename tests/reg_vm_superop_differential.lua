@@ -21,6 +21,12 @@ local cases = {
     { "while + fused body",        "local a=3 local b=4 local i=0 local s=0 while i<10 do local p=a local q=b s=s+p+q i=i+1 end return s" },
     { "table build",               "local t={} local one=1 local two=2 t[one]=10 t[two]=20 return t[1]+t[2]" },
     { "nested fused + return",     "local function g() local a=7 local b=8 local c=9 return a+b+c end return g()*2" },
+    -- Cross-kind fusions (MOVE;LOADK, LOADK;MOVE, GETGLOBAL;MOVE/LOADK, ...)
+    { "move;loadk interleave",     "local a=1 local x=a local b=2 local y=b local c=3 return x+y+c+a" },
+    { "loadk;move interleave",     "local a=10 local b=a local c=20 local d=c return a+b+c+d" },
+    { "global;move;const mix",     "local f=math.floor local a=5 local g=tostring local b=a return f(2.7)+#g(b)+b" },
+    { "const;global prologue",     "local k=7 local m=math.max local n=9 return m(k,n)" },
+    { "args into call (mixed)",    "local a=3 local b=4 return math.max(a, b) + math.min(a, b)" },
 }
 
 local passed, failed = 0, 0

@@ -99,7 +99,9 @@ local function replacement(token, key, index, hook)
     end
     return _as_v
     end)(%s,%d,%d,%s,_G)]=]):format(index, token.value, tag, key, hook_name)
-    return expression, true
+    --[[ wrap the whole call in an outer paren so it stays one primary expression in
+         call-sugar position: `print "x"` -> print((...)), not print(fn)(...). ]]
+    return "(" .. expression .. ")", true
 end
 
 function Step.apply(source, options)
@@ -115,8 +117,15 @@ function Step.apply(source, options)
         error("authenticated-strings: hostVerifier must be a global identifier")
     end
 
-    build_number = build_number + 1
-    local key = hash(source .. tostring(options.seed or "") .. tostring(build_number), 173)
+    --[[ with a seed the build must be reproducible, so key off the seed only; without
+         one, fold the per-process build counter for uniqueness. ]]
+    local key
+    if options.seed ~= nil then
+        key = hash(source .. tostring(options.seed), 173)
+    else
+        build_number = build_number + 1
+        key = hash(source .. tostring(build_number), 173)
+    end
     local output, cursor, transformed = {}, 1, 0
     for index, token in ipairs(Lexer.scan(source)) do
         output[#output + 1] = source:sub(cursor, token.start - 1)
