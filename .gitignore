@@ -22,6 +22,9 @@ env-probe.luau
 *.probe.lua
 *.probe.luau
 
+# Local update-check stamp (per-checkout, regenerable; never belongs in the repo)
+.colisseum-update-stamp
+
 # CLI captures, logs, scratch
 *-capture.txt
 *.log
