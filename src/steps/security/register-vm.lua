@@ -116,7 +116,25 @@ function Step.apply(source, options)
         end
         m_field = ",m={" .. table.concat(esc, ",") .. "}"
     end
-    local blob, regs = RegBytecode.encode_opaque(mainproto, fog, options.encrypt)
+    --[[ resolve the credit before encoding: it feeds the keystream key derivation, so the
+         decoded blob is bound to the brand. an edited or stripped credit derives the wrong
+         key and the program decodes to garbage -- the attribution cannot be removed. ]]
+    local credit = "This file was obfuscated using Colisseum Obfuscator"
+    do
+        local f = io.open(core_dir .. "../steps/noise/signature.json", "rb")
+        if f then
+            local t = f:read("*a") or ""; f:close()
+            local m = t:match('"credit"%s*:%s*"(.-)"')
+            if m and m ~= "" then credit = m end
+        end
+    end
+    --[[ keyed S-box substitution layer (a cipher class distinct from the ChaCha keystream);
+         follows the encrypt setting by default, so fortress ships it. peeled once at VM
+         start, so it adds no per-instruction cost to execution. ]]
+    local substitute = options.substitute
+    if substitute == nil then substitute = options.encrypt and true or false end
+    local sb_field = substitute and ",sb=1" or ""
+    local blob, regs = RegBytecode.encode_opaque(mainproto, fog, options.encrypt, credit, substitute)
     -- Optional Fibonacci (Zeckendorf) blob layer: carry the fogged stream as bit-packed
     -- self-delimiting Fibonacci codewords, re-encoding every constant, operand, and offset.
     -- The runtime rebuilds the bytes once at VM start. Opt-in, since it grows the payload.
@@ -138,6 +156,13 @@ function Step.apply(source, options)
         return h
     end
     local h_field = ",h=" .. blob_hash(blob)
+    --[[ brand binding: the credit also feeds the keystream (see encode_opaque above), so a
+         tampered credit already corrupts the blob. this embeds the readable credit as C and
+         carries its hash as a second honeypot latch, so the drift trips even on the paths
+         that don't decode the blob. the credit cannot be edited or removed either way. ]]
+    local C = prefix .. "C"
+    local credit_literal = '"' .. credit:gsub(".", function(c) return string.format("\\%03d", c:byte()) end) .. '"'
+    local cr_field = ",c=" .. C .. ",cr=" .. blob_hash(credit)
     local fog_literal = "{" .. table.concat(fog, ",") .. "}"
     --[[ fragment the blob into several literals concatenated at load, so the payload
          isn't one contiguous string to a dump or a grep. reconstructed S is identical,
@@ -323,6 +348,7 @@ function Step.apply(source, options)
         "local " .. O .. "=" .. norm_literal,
         "local " .. E .. "=" .. Environment.expression(),
         "local " .. A .. "=" .. Environment.anchor(),
+        "local " .. C .. "=" .. credit_literal,
     }
     -- Decoy VM routes: each is a block of payload-shaped locals plus a dead branch,
     -- guarded by a false predicate, that pcall-wraps a decoy R.run. A deobfuscator
@@ -384,7 +410,7 @@ function Step.apply(source, options)
     -- it is safe to yield, so heavy synchronous loops do not hit the execution-time
     -- limit. No-op where no scheduler exists.
     local run_stmt = "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G ..
-        ",o=" .. O .. fib_field .. enc_field .. m_field .. h_field .. kc_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})"
+        ",o=" .. O .. fib_field .. enc_field .. m_field .. h_field .. kc_field .. cr_field .. sb_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})"
     local bundle = table.concat({
         head,
         table.concat(mids, "\n"),

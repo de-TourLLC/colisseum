@@ -67,8 +67,9 @@ local function block(key, counter, nonce)
 end
 ChaCha.block = block
 
--- Derive 8 key words, 3 nonce words and a start counter from the per-build fog bytes.
-function ChaCha.derive(fog)
+-- Derive 8 key words, 3 nonce words and a start counter from the per-build fog bytes
+-- and the embedded credit, so the keystream is bound to both.
+function ChaCha.derive(fog, credit)
     local nf = #fog
     --[[ fold the fog into four 32-bit states and mix all four into every output byte,
          so key+nonce depend on ~128 bits of state, not one 32-bit value.
@@ -81,6 +82,19 @@ function ChaCha.derive(fog)
         b = (b + x * 40503 + 1) % M; b = (b * 1664525 + 1013904223) % M
         c = (c + x * 2654435761) % M; c = (c * 22695477 + 1) % M
         d = (d + x * 2246822519 + 1) % M; d = (d * 134775813 + 1) % M
+    end
+    --[[ fold the credit into the same state, so the key (and thus the decoded blob)
+         depends on the brand. a stripped or edited credit derives the wrong key and the
+         program decodes to garbage -- it cannot run without the intact attribution.
+         empty credit leaves the state untouched, so credit-less dev builds are unchanged. ]]
+    if credit then
+        for i = 1, #credit do
+            local x = credit:byte(i)
+            a = (a + x * 16777619) % M;  a = (a * 48271) % M
+            b = (b + x * 40503 + 1) % M; b = (b * 1664525 + 1013904223) % M
+            c = (c + x * 2654435761) % M; c = (c * 22695477 + 1) % M
+            d = (d + x * 2246822519 + 1) % M; d = (d * 134775813 + 1) % M
+        end
     end
     local bytes = {}
     for i = 1, 44 do

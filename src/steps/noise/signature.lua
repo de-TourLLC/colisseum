@@ -124,8 +124,8 @@ local function sanitize(text)
     return text
 end
 
-local function disguise(prng, value, pool)
-    local phrase = sanitize(prng:pick(pool.phrases))
+local function disguise(prng, value, pool, forced_phrase)
+    local phrase = sanitize(forced_phrase or prng:pick(pool.phrases))
     if phrase == "" then return nil end
     local length = #phrase
     local literal = '"' .. phrase .. '"'
@@ -156,6 +156,12 @@ function Step.apply(source, options)
     local shebang = source:match("^(#![^\n]*\n)") or ""
     local body = source:sub(#shebang + 1)
 
+    --[[ weave the credit into a number too (first eligible integer -> #("credit")+N),
+         so the brand is in the output's computation, not only a removable header line.
+         the visible header below is the readable mark. ]]
+    local credit = sanitize(pool.credit or "Obfuscated with Colisseum")
+    local credit_embedded = false
+
     local out, cursor, budget = {}, 1, max_bytes
     for _, token in ipairs(Lexer.scan(body)) do
         out[#out + 1] = body:sub(cursor, token.start - 1)
@@ -163,11 +169,18 @@ function Step.apply(source, options)
         local value = tonumber(token.value)
         local plain_integer = token.kind == "number" and value and value == math.floor(value)
             and math.abs(value) < SAFE and not token.value:find("[%.eExX]")
-        if plain_integer and budget > 64 and prng:float() < density then
-            local replacement = disguise(prng, value, pool)
-            if replacement and (#replacement - #text) <= budget then
-                out[#out + 1] = replacement
-                budget = budget - (#replacement - #text)
+        if plain_integer and budget > 64 then
+            -- force the credit onto the first eligible integer; the rest follow density
+            local force = not credit_embedded
+            if force or prng:float() < density then
+                local replacement = disguise(prng, value, pool, force and credit or nil)
+                if replacement and (#replacement - #text) <= budget then
+                    out[#out + 1] = replacement
+                    budget = budget - (#replacement - #text)
+                    if force then credit_embedded = true end
+                else
+                    out[#out + 1] = text
+                end
             else
                 out[#out + 1] = text
             end
@@ -178,7 +191,6 @@ function Step.apply(source, options)
     end
     out[#out + 1] = body:sub(cursor)
 
-    local credit = sanitize(pool.credit or "This file was obfuscated using Colisseum | WEBSITE SOON")
     local header = "local " .. prng:identifier(prng:range(6, 10)) .. '="' .. credit .. '";'
 
     Step.last_metadata = { budget_used = max_bytes - budget, validated = true }

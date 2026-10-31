@@ -84,7 +84,7 @@ local function cc_block(key, counter, nonce)
     for i = 1, 16 do w[i] = cc_add(w[i], s[i]) end
     return w
 end
-local function cc_derive(fog)
+local function cc_derive(fog, cred)
     local nf = #fog
     -- mirror of ChaCha.derive in chacha.lua; keep byte-identical or the keystream drifts
     local M = 4294967296
@@ -95,6 +95,17 @@ local function cc_derive(fog)
         b = (b + x * 40503 + 1) % M; b = (b * 1664525 + 1013904223) % M
         c = (c + x * 2654435761) % M; c = (c * 22695477 + 1) % M
         d = (d + x * 2246822519 + 1) % M; d = (d * 134775813 + 1) % M
+    end
+    -- fold the credit into the state (mirror of ChaCha.derive): the key is bound to the
+    -- brand, so an edited or stripped credit derives the wrong key and the blob is garbage.
+    if cred then
+        for i = 1, #cred do
+            local x = cred:byte(i)
+            a = (a + x * 16777619) % M;  a = (a * 48271) % M
+            b = (b + x * 40503 + 1) % M; b = (b * 1664525 + 1013904223) % M
+            c = (c + x * 2654435761) % M; c = (c * 22695477 + 1) % M
+            d = (d + x * 2246822519 + 1) % M; d = (d * 134775813 + 1) % M
+        end
     end
     local bytes = {}
     for i = 1, 44 do
@@ -111,9 +122,9 @@ local function cc_derive(fog)
     for i = 1, 3 do nonce[i] = word(32 + (i - 1) * 4 + 1) end
     return key, nonce, 1
 end
--- Fill mask[1..n] with the ChaCha20 keystream for the fog-derived key/nonce.
-local function cc_fill(mask, fog, n)
-    local key, nonce, counter = cc_derive(fog)
+-- Fill mask[1..n] with the ChaCha20 keystream for the fog+credit-derived key/nonce.
+local function cc_fill(mask, fog, n, cred)
+    local key, nonce, counter = cc_derive(fog, cred)
     local produced = 0
     while produced < n do
         local w = cc_block(key, counter, nonce)
@@ -128,6 +139,28 @@ local function cc_fill(mask, fog, n)
     end
 end
 
+--[[ inverse of reg-bytecode's keyed S-box (sbox_wrap): rebuild the same key-derived byte
+     permutation from the fog and the embedded credit, then invert it. applied once at VM
+     start to peel the substitution layer, so the execution hot path reads the plain
+     stream-ciphered bytes with no per-byte cost. an edited or stripped credit derives the
+     wrong box and the blob decodes to garbage. keep this byte-identical with sbox_build. ]]
+local function sbox_inv(fog, cred)
+    local M = 4294967296
+    local seed = 2654435761 % M
+    for i = 1, #fog do seed = (seed + fog[i] * 16777619) % M; seed = (seed * 48271) % M end
+    for i = 1, #cred do seed = (seed + cred:byte(i) * 16777619) % M; seed = (seed * 48271) % M end
+    local box = {}
+    for i = 0, 255 do box[i] = i end
+    for i = 255, 1, -1 do
+        seed = (seed * 48271 + 12345) % M
+        local j = kk_floor(seed / 64) % (i + 1)
+        box[i], box[j] = box[j], box[i]
+    end
+    local inv = {}
+    for v = 0, 255 do inv[box[v]] = v end
+    return inv
+end
+
 local OP = RegBytecode.OP
 
 local Runtime = {}
@@ -140,6 +173,15 @@ function Runtime.run(program, options)
     local S = program.S
     -- fib layer: program.fib is the packed bit length; rebuild the bytes before offset math
     if program.fib then S = fib_unpack(S, program.fib) end
+    --[[ S-box layer: peel the keyed byte substitution once here (one O(n) startup pass,
+         like the keystream/fib setup), leaving the stream-ciphered bytes the hot path
+         already expects -- so per-instruction execution speed is unchanged. ]]
+    if program.sb then
+        local inv = sbox_inv(program.f or { 0 }, program.c or "")
+        local t = {}
+        for i = 1, #S do t[i] = kk_char(inv[S:byte(i)]) end
+        S = kk_concat(t)
+    end
     local regs = program.r
     local fog = program.f or { 0 }
     local nfog = #fog
@@ -153,11 +195,14 @@ function Runtime.run(program, options)
          byte-for-byte). program.enc = real ChaCha20; else the legacy hash keystream. ]]
     local mask = {}
     local slen = #S
+    -- the embedded credit feeds the keystream; nil/"" leaves it unchanged (dev builds)
+    local cred = program.c or ""
     if program.enc then
-        cc_fill(mask, fog, slen)
+        cc_fill(mask, fog, slen, cred)
     else
         local ks_key = 5381
         for i = 1, nfog do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
+        for i = 1, #cred do ks_key = (ks_key * 33 + cred:byte(i)) % 4294967296 end
         for i = 1, slen do
             local h = (i * 40503 + ks_key) % 4294967296
             h = (h * 65599 + 3266489917) % 4294967296
@@ -270,6 +315,18 @@ function Runtime.run(program, options)
             h = (h * 48271) % 2147483647
         end
         if h ~= program.h then hp = 1 + (steps % 3) end
+    end
+
+    --[[ brand gate: hash the embedded credit and latch the drift if it was edited or
+         removed, so the attribution can't be stripped without corrupting results. ]]
+    if program.cr then
+        local c = program.c or ""
+        local h = 2166136261 % 2147483647
+        for i = 1, #c do
+            h = (h + c:byte(i) * 16777619) % 2147483647
+            h = (h * 48271) % 2147483647
+        end
+        if h ~= program.cr then hp = 1 + (steps % 3) end
     end
 
     local execute_proto  -- forward

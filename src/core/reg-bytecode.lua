@@ -134,6 +134,35 @@ do
 end
 local floor = math.floor
 
+--[[ Keyed S-box substitution over the stream-ciphered blob: a different cipher class
+     from the ChaCha/XOR keystream (byte substitution / confusion rather than a keystream).
+     The 256-entry box is derived from the fog and the embedded credit, so the brand is a
+     decryption input here too, and the shipped blob's byte values no longer line up with
+     the keystream output. reg-runtime inverts it in one startup pass (no per-byte cost on
+     the execution hot path), so run-time speed is unchanged. Keep the math byte-identical;
+     every step stays under 2^53 so doubles are exact on Lua, LuaJIT and Luau alike. ]]
+local function sbox_build(fog, cred)
+    local M = 4294967296
+    local seed = 2654435761 % M
+    for i = 1, #fog do seed = (seed + fog[i] * 16777619) % M; seed = (seed * 48271) % M end
+    for i = 1, #cred do seed = (seed + byte(cred, i) * 16777619) % M; seed = (seed * 48271) % M end
+    local box = {}
+    for i = 0, 255 do box[i] = i end
+    for i = 255, 1, -1 do             -- seeded Fisher-Yates over the byte alphabet
+        seed = (seed * 48271 + 12345) % M
+        local j = floor(seed / 64) % (i + 1)
+        box[i], box[j] = box[j], box[i]
+    end
+    return box
+end
+-- Encode side: substitute each stream-ciphered byte through the keyed S-box.
+local function sbox_wrap(raw, fog, cred)
+    local box = sbox_build(fog, cred)
+    local out = {}
+    for i = 1, #raw do out[i] = char(box[byte(raw, i)]) end
+    return concat(out)
+end
+
 RegBytecode.MAGIC = "CLRV"
 RegBytecode.VERSION = 1
 
@@ -211,8 +240,9 @@ local function bi32(out, n)
     out[#out + 1] = char(floor(n / 16777216) % 256)
 end
 
-function RegBytecode.encode_opaque(mainproto, fog, encrypt)
+function RegBytecode.encode_opaque(mainproto, fog, encrypt, credit, substitute)
     fog = fog or { 0 }
+    credit = credit or ""
     -- Assign region ids in pre-order: main = 0, children in encounter order.
     local region_of, id_to_proto, next_id = {}, {}, 0
     local function visit(p)
@@ -272,7 +302,7 @@ function RegBytecode.encode_opaque(mainproto, fog, encrypt)
         -- ChaCha20 (RFC 8439) keystream XOR keyed off the per-build fog; the reg-runtime
         -- decoder derives the same keystream.
         local ChaCha = require("src.core.chacha")
-        local key, nonce, ctr = ChaCha.derive(fog)
+        local key, nonce, ctr = ChaCha.derive(fog, credit)
         local ks = ChaCha.keystream(key, nonce, ctr, #raw)
         for i = 1, #raw do out_b[i] = char(bxor(byte(raw, i), ks[i])) end
     else
@@ -280,6 +310,8 @@ function RegBytecode.encode_opaque(mainproto, fog, encrypt)
         local nf = #fog
         local ks_key = 5381
         for i = 1, nf do ks_key = (ks_key * 33 + fog[i]) % 4294967296 end
+        -- fold the credit too, so the legacy keystream is brand-bound like the ChaCha path.
+        for i = 1, #credit do ks_key = (ks_key * 33 + byte(credit, i)) % 4294967296 end
         local function ks_mask(i)
             local h = (i * 40503 + ks_key) % 4294967296
             h = (h * 65599 + 3266489917) % 4294967296
@@ -290,6 +322,9 @@ function RegBytecode.encode_opaque(mainproto, fog, encrypt)
         for i = 1, #raw do out_b[i] = char(bxor(byte(raw, i), ks_mask(i))) end
     end
     raw = concat(out_b)
+    -- Second cipher class over the stream-ciphered blob: keyed byte substitution (S-box).
+    -- reg-runtime peels it off once at VM start, so the execution hot path is untouched.
+    if substitute then raw = sbox_wrap(raw, fog, credit) end
     return raw, out
 end
 
