@@ -28,7 +28,8 @@ Colisseum is under active development. Its not finished yet lolz
 - **Unique on every build** | the same input yields a different output each run
   (independent identifiers, values, and layout), with no fixed signatures. An
   explicit seed can be supplied for reproducible builds.
-- **Single-line output** | every preset emits the result on one physical line.
+- **Single-line output** | every preset emits the result on one physical line,
+  except `Total`, whose embedded VM wrapper spans several lines.
 - **Layered transformations** | confusable identifier renaming, number-to-expression
   and literal rewriting, string pooling / splitting / encryption, dead-code, decoy
   functions, opaque predicates, control-flow flattening, structural noise, runtime

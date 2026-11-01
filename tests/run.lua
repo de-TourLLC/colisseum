@@ -180,6 +180,11 @@ test("text presets produce valid executable LuaJIT output", function()
         check(chunk ~= nil, name .. " preset did not load: " .. tostring(load_error))
         local ok, result = pcall(chunk)
         check(ok and result == 42, name .. " preset changed runtime result: " .. tostring(result))
+        -- Documented contract (README/SETUP): these text presets emit the result on a
+        -- single physical line. `total` is exempt -- its native-VM wrapper is structurally
+        -- multi-line -- and is covered by its own test below.
+        local body = output:gsub("[\r\n]+$", "")
+        check(not body:find("\n", 1, true), name .. " preset must emit a single physical line")
     end
 end)
 

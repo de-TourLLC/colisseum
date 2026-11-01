@@ -112,6 +112,7 @@ local presets = {
         { "rename", { } },
         { "strings", { } },
         { "anti-tamper", { threshold = 3, detectExecutor = true } },
+        { "minify", { } },
         { "field-index", { } },
         { "junk-comments", { } },
         { "rename", { } },

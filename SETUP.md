@@ -37,7 +37,8 @@ Then obfuscate and package to Luau bytecode:
 lua cli.lua --preset Full --secure --LuaU --out output.lua input.lua
 ```
 
-All preset outputs are emitted on a single physical line.
+All preset outputs are emitted on a single physical line, except `Total`, whose
+embedded VM wrapper spans several lines.
 
 ## Many files at once (batch)
 
