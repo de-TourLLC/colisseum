@@ -41,7 +41,7 @@ jobs:
         with:
           submodules: recursive
       - name: Configure Luau
-        run: cmake -S vendor/Luau -B build/luau -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=ON -DLUAU_BUILD_TESTS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        run: cmake -S vendor/Luau -B build/luau -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_CLI=ON -DLUAU_BUILD_TESTS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_CXX_FLAGS="-include cstdint"
       - name: Build Luau
         run: cmake --build build/luau --config Release --parallel 2
       - name: Run Luau tests
