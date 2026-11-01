@@ -74,7 +74,7 @@ Recommended reproducible configuration:
 
 ```sh
 cmake -S luau -B build/luau -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DLUAU_BUILD_CLI=OFF -DLUAU_BUILD_TESTS=ON
+  -DLUAU_BUILD_CLI=OFF -DLUAU_BUILD_TESTS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 cmake --build build/luau --config RelWithDebInfo
 ```
 
