@@ -239,10 +239,31 @@ local function bi32(out, n)
     out[#out + 1] = char(floor(n / 65536) % 256)
     out[#out + 1] = char(floor(n / 16777216) % 256)
 end
+-- Same little-endian biased i32 as bi32, returned as a 4-byte string (for slot placement).
+local function bi32s(n)
+    n = (n + 2147483648) % 4294967296
+    return char(n % 256, floor(n / 256) % 256, floor(n / 65536) % 256, floor(n / 16777216) % 256)
+end
 
-function RegBytecode.encode_opaque(mainproto, fog, encrypt, credit, substitute)
+--[[ layout (optional): varies the per-instruction byte layout per build so the fixed
+     13-byte stride and +1/+5/+9 operand offsets are not a cross-build fingerprint. Fields:
+     gap (bytes of filler after the opcode byte) and oa/ob/oc (byte offsets of operands
+     a/b/c, a permutation of {1+gap, 5+gap, 9+gap}). Omitted -> the classic op|a|b|c / 13
+     layout, so reg-vm.lua, tests, and any caller that passes no layout stay byte-identical.
+     reg-runtime reads the same stride/offsets from program.st / program.oa|ob|oc. ]]
+function RegBytecode.encode_opaque(mainproto, fog, encrypt, credit, substitute, layout)
     fog = fog or { 0 }
     credit = credit or ""
+    local gap = (layout and layout.gap) or 0
+    local oa = (layout and layout.oa) or 1
+    local ob = (layout and layout.ob) or 5
+    local oc = (layout and layout.oc) or 9
+    local stride = 13 + gap
+    -- slot index (1..3) each operand byte-offset maps to: slot k lives at (1+gap)+4*(k-1)
+    local sa = floor((oa - (1 + gap)) / 4) + 1
+    local sb = floor((ob - (1 + gap)) / 4) + 1
+    local sc = floor((oc - (1 + gap)) / 4) + 1
+    local gap_bytes = gap > 0 and string.rep(char(0), gap) or ""
     -- Assign region ids in pre-order: main = 0, children in encounter order.
     local region_of, id_to_proto, next_id = {}, {}, 0
     local function visit(p)
@@ -283,9 +304,12 @@ function RegBytecode.encode_opaque(mainproto, fog, encrypt, credit, substitute)
         reg.d = pos + 1
         for _, inst in ipairs(p.code) do
             buf[#buf + 1] = char(inst[1])
-            pos = pos + 1
-            bi32(buf, inst[2]); bi32(buf, inst[3]); bi32(buf, inst[4])
-            pos = pos + 12
+            if gap > 0 then buf[#buf + 1] = gap_bytes end
+            -- place a/b/c into their per-build slots so reg-runtime reads them back at oa/ob/oc
+            local slots = {}
+            slots[sa] = bi32s(inst[2]); slots[sb] = bi32s(inst[3]); slots[sc] = bi32s(inst[4])
+            buf[#buf + 1] = slots[1]; buf[#buf + 1] = slots[2]; buf[#buf + 1] = slots[3]
+            pos = pos + stride
         end
         local kids = {}
         for ci, child in ipairs(p.protos) do kids[ci] = region_of[child] end

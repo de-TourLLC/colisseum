@@ -134,7 +134,20 @@ function Step.apply(source, options)
     local substitute = options.substitute
     if substitute == nil then substitute = options.encrypt and true or false end
     local sb_field = substitute and ",sb=1" or ""
-    local blob, regs = RegBytecode.encode_opaque(mainproto, fog, options.encrypt, credit, substitute)
+    --[[ per-build instruction layout: a random gap after the opcode byte and a shuffled
+         operand order, so the classic 13-byte stride and +1/+5/+9 operand offsets are no
+         longer a fixed cross-build fingerprint. The runtime reads the same stride/offsets
+         from program.st / program.oa|ob|oc; encode_opaque writes the matching bytes. ]]
+    local gap = prng:range(0, 7)
+    local op_order = { 1, 2, 3 } -- which operand (a=1,b=2,c=3) lands in slot 1,2,3
+    for i = 3, 2, -1 do local j = prng:range(1, i); op_order[i], op_order[j] = op_order[j], op_order[i] end
+    local slot_off = { 1 + gap, 5 + gap, 9 + gap }
+    local off_for = {}
+    for k = 1, 3 do off_for[op_order[k]] = slot_off[k] end
+    local layout = { gap = gap, oa = off_for[1], ob = off_for[2], oc = off_for[3] }
+    local stride = 13 + gap
+    local layout_field = ",st=" .. stride .. ",oa=" .. layout.oa .. ",ob=" .. layout.ob .. ",oc=" .. layout.oc
+    local blob, regs = RegBytecode.encode_opaque(mainproto, fog, options.encrypt, credit, substitute, layout)
     -- Optional Fibonacci (Zeckendorf) blob layer: carry the fogged stream as bit-packed
     -- self-delimiting Fibonacci codewords, re-encoding every constant, operand, and offset.
     -- The runtime rebuilds the bytes once at VM start. Opt-in, since it grows the payload.
@@ -410,7 +423,7 @@ function Step.apply(source, options)
     -- it is safe to yield, so heavy synchronous loops do not hit the execution-time
     -- limit. No-op where no scheduler exists.
     local run_stmt = "local " .. V .. "=" .. R .. ".run({S=" .. S .. ",f=" .. F .. ",r=" .. G ..
-        ",o=" .. O .. fib_field .. enc_field .. m_field .. h_field .. kc_field .. cr_field .. sb_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})"
+        ",o=" .. O .. fib_field .. enc_field .. m_field .. h_field .. kc_field .. cr_field .. sb_field .. layout_field .. "},{environment=" .. E .. ",anchor=" .. A .. ",yield_interval=1000000})"
     local bundle = table.concat({
         head,
         table.concat(mids, "\n"),

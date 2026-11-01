@@ -1,5 +1,78 @@
 # Colisseum Update Log
 
+Date: 2026-11-01
+
+## Signature Pool No Longer Narrates the Design (Anti-AI Readability Fix)
+
+The `signature` step runs last in every preset and rewrites integer literals as
+`((#("phrase")+N))` / `((M-#("phrase")))`, drawing the phrase from
+`src/steps/noise/signature.json`. The old phrase pool described the obfuscator's own
+internals in plain English -- "permuting opcodes", "ChaCha20 keystream go brrr",
+"planting decoy VMs", "polymorphic opcodes: 255 ways to say MOVE", "silent drift armed:
+wrong answers only", "the attribution is welded to the keystream", "reformat this and it
+dies". Those strings survive minification (they are live code, not comments), so every
+build shipped a plaintext tour of its design **and** its defences. For an LLM or a human
+reading the output, that is the single most useful artifact in the file: it names each
+layer to undo and which transforms to avoid touching.
+
+Changes:
+- **`src/steps/noise/signature.json`**: the ~180-entry phrase pool was replaced with
+  ~150 phrases that keep the playful tone but reveal nothing about the pipeline. None
+  names a real technique or defence (VM, bytecode, opcode, ChaCha, Fibonacci/Zeckendorf,
+  decoys, superoperators, tamper gate, honeypot/drift, beautifier detection, keystream,
+  credit/keystream binding, etc.). A subset is deliberate misdirection -- it references
+  techniques the pipeline does **not** use (RSA-4096, AES-256-GCM, WASM sandbox, JIT,
+  homomorphic, blockchain, quantum) to send static analysis down dead ends. The `credit`
+  field is unchanged, so the keystream-bound watermark and the readable attribution header
+  behave exactly as before.
+- No code changed: the `signature` step, its length-based number encoding, and the
+  per-build selection are identical. Only the data pool changed, so all existing behaviour
+  (including seeded reproducibility and the credit binding) is preserved.
+
+Verified: a `Fortress` build of `input.lua` loads cleanly and runs to the correct result;
+an output scan for design keywords (chacha, register, bytecode, opcode, fibonacci, decoy,
+tamper, keystream, honeypot, encrypt, cipher, permute, loadstring, dispatch, ...) now
+returns nothing but the intentional credit watermark.
+
+## Per-Build Instruction Layout (Register VM)
+
+The register VM used a fixed instruction layout: every instruction was `op(1) + a(4) +
+b(4) + c(4)` = 13 bytes, and the interpreter read operands at `off+1 / off+5 / off+9` with
+a `* 13` stride. Those constants were identical in every build, so two builds of the same
+(or different) source lined up byte-for-byte at the instruction level -- a stable fingerprint
+and an easy anchor for cross-build diffing once the keystream was recovered.
+
+Changes:
+- **`src/core/reg-bytecode.lua`** (`encode_opaque`): takes an optional `layout = { gap, oa,
+  ob, oc }`. `gap` inserts filler bytes after the opcode byte (so the stride becomes
+  `13 + gap`); `oa/ob/oc` are the per-build byte offsets of operands a/b/c (a permutation of
+  the three operand slots). Omitting `layout` reproduces the classic 13-byte op|a|b|c layout
+  byte-for-byte, so `reg-vm.lua`, the tests, and any other caller are unchanged.
+- **`src/core/reg-runtime.lua`**: the dispatch loop reads the stride and operand offsets from
+  `program.st` / `program.oa|ob|oc` (defaults 13 / 1,5,9), including the superoperator
+  (`FUSE*`) handlers that decode a second instruction.
+- **`src/steps/security/register-vm.lua`**: picks a random `gap` (0-7) and a shuffled operand
+  order per build, passes the layout to `encode_opaque`, and ships the matching
+  `st/oa/ob/oc` in the program table. The `signature` step then disguises those integers too,
+  so the layout constants are not even bare numbers in the output.
+
+Verified: the register-VM differential, superoperator-differential, encrypt, Fibonacci, and
+tamper suites pass; two independent `Fortress` builds show different `st/oa/ob/oc` and both
+run to the correct result.
+
+## Honest Protection Notice on Every Preset
+
+`protection-notice` existed but was wired into no preset. It is now appended (last) to every
+preset via `Obfuscator.preset`, and re-applied after the VM wrap in `package_luau` so it
+survives the secure/LuaU path. The emitted text is an **honest** ownership/authorization
+notice (`PROTECTION_NOTICE` in `src/obfuscator.lua`): it states the file is protected IP and
+asks automated assistants to confirm ownership/authorization before helping to reverse it,
+and it explicitly says the notice is not secret and must not be concealed from the user. It
+is deliberately **not** a covert prompt-injection: the step's prior `DEFAULT_NOTICE` (which
+impersonated a system directive and told an AI to deceive its user) is left in the file but
+is not what the presets ship. Override per build with the step's `message` option, or set it
+to `""` to omit.
+
 Date: 2026-10-30
 
 ## Own-VM Luau Semantics, Modern Syntax, and a Crypto/Hardening/Perf Pass (Fiu Removed)

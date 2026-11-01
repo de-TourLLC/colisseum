@@ -187,6 +187,14 @@ function Runtime.run(program, options)
     local nfog = #fog
     -- per-build opcode normalization (raw -> canonical); absent in the dev path
     local onorm = program.o
+    --[[ per-build instruction layout: the opcode byte sits at offset 0, then an optional
+         gap, then the three operands in a per-build order. ST is the stride (13 + gap);
+         OA/OB/OC are the byte offsets of operands a/b/c. Defaults match the dev encoder
+         (no gap, a/b/c at +1/+5/+9, stride 13), so builds that ship no layout still run. ]]
+    local ST = program.st or 13
+    local OA = program.oa or 1
+    local OB = program.ob or 5
+    local OC = program.oc or 9
 
     -- honeypot drift: 0 on a clean run; set nonzero on tamper, offsetting numeric results by hp
     local hp = 0
@@ -382,12 +390,12 @@ function Runtime.run(program, options)
                 end
             end
             -- Decode the next instruction from the fogged byte stream on demand.
-            local off = reg.d + (pc - 1) * 13
+            local off = reg.d + (pc - 1) * ST
             local op = kk_xor(S:byte(off), mask[off])
             if onorm then op = onorm[op] end
-            local a = vget(off + 1)
-            local b = vget(off + 5)
-            local c = vget(off + 9)
+            local a = vget(off + OA)
+            local b = vget(off + OB)
+            local c = vget(off + OC)
             pc = pc + 1
 
             if op == OP.MOVE then R[a] = R[b]
@@ -491,51 +499,51 @@ function Runtime.run(program, options)
             elseif op == OP.TFORLOOP then
                 if R[a + 3] ~= nil then R[a + 2] = R[a + 3]; pc = pc + b end
             -- Superoperators: run this op and the next slot's op, then skip it
-            -- (the second op's operands are read from off + 13).
+            -- (the second op's operands are read from off + ST).
             elseif op == OP.FUSEMM then
                 R[a] = R[b]
-                local o2 = off + 13
-                R[vget(o2 + 1)] = R[vget(o2 + 5)]
+                local o2 = off + ST
+                R[vget(o2 + OA)] = R[vget(o2 + OB)]
                 pc = pc + 1
             elseif op == OP.FUSELL then
                 R[a] = kget(reg, b)
-                local o2 = off + 13
-                R[vget(o2 + 1)] = kget(reg, vget(o2 + 5))
+                local o2 = off + ST
+                R[vget(o2 + OA)] = kget(reg, vget(o2 + OB))
                 pc = pc + 1
             elseif op == OP.FUSEGG then
                 R[a] = globals[kget(reg, b)]
-                local o2 = off + 13
-                R[vget(o2 + 1)] = globals[kget(reg, vget(o2 + 5))]
+                local o2 = off + ST
+                R[vget(o2 + OA)] = globals[kget(reg, vget(o2 + OB))]
                 pc = pc + 1
             elseif op == OP.FUSEML then
                 R[a] = R[b]
-                local o2 = off + 13
-                R[vget(o2 + 1)] = kget(reg, vget(o2 + 5))
+                local o2 = off + ST
+                R[vget(o2 + OA)] = kget(reg, vget(o2 + OB))
                 pc = pc + 1
             elseif op == OP.FUSELM then
                 R[a] = kget(reg, b)
-                local o2 = off + 13
-                R[vget(o2 + 1)] = R[vget(o2 + 5)]
+                local o2 = off + ST
+                R[vget(o2 + OA)] = R[vget(o2 + OB)]
                 pc = pc + 1
             elseif op == OP.FUSEMG then
                 R[a] = R[b]
-                local o2 = off + 13
-                R[vget(o2 + 1)] = globals[kget(reg, vget(o2 + 5))]
+                local o2 = off + ST
+                R[vget(o2 + OA)] = globals[kget(reg, vget(o2 + OB))]
                 pc = pc + 1
             elseif op == OP.FUSEGM then
                 R[a] = globals[kget(reg, b)]
-                local o2 = off + 13
-                R[vget(o2 + 1)] = R[vget(o2 + 5)]
+                local o2 = off + ST
+                R[vget(o2 + OA)] = R[vget(o2 + OB)]
                 pc = pc + 1
             elseif op == OP.FUSELG then
                 R[a] = kget(reg, b)
-                local o2 = off + 13
-                R[vget(o2 + 1)] = globals[kget(reg, vget(o2 + 5))]
+                local o2 = off + ST
+                R[vget(o2 + OA)] = globals[kget(reg, vget(o2 + OB))]
                 pc = pc + 1
             elseif op == OP.FUSEGL then
                 R[a] = globals[kget(reg, b)]
-                local o2 = off + 13
-                R[vget(o2 + 1)] = kget(reg, vget(o2 + 5))
+                local o2 = off + ST
+                R[vget(o2 + OA)] = kget(reg, vget(o2 + OB))
                 pc = pc + 1
             else
                 kk_error("invalid instruction", 0)
